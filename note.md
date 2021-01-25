@@ -6,7 +6,7 @@
     - inherit BartModel and add customized method
         * MyBart (custom class)
         * BartForConditionalGeneration (parent 1)
-            - foward() what Sewon overwrites
+            - foward() what Sewon overwrites -> it uses pretrained model directly
             - self.model = BartModel(config)
                 * forward method that we want to overwrite
         * BartPretrainedModel (parent 2)
@@ -15,7 +15,7 @@
         * pipeline = classifier_fc(pre_trained_model(input))
     - Q: why F.linear()?
         * such a function method is useful when we inherit model and do not want to write a new model initialization method
-
+    - EncoderLayer (in)-> BartEncoder (parent)-> PretrainedModel
 * T5.py
     - T5 model, encoder and decoder
     - T5 model architecture
@@ -46,6 +46,11 @@
     - BertEncoder already enabled checkpointing by argument gradient_checkpointing
     - There are encoder and decoder. I can try apply encoder and decoder
     - [bert with checkpointing](https://huggingface.co/transformers/_modules/transformers/models/bert/modeling_bert.html#BertModel)
+        - `self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])`
+        - it's applied on each layer.
+        - we need to trace `BART` layer module
+        - [bart encoder layer](https://huggingface.co/transformers/_modules/transformers/models/bart/modeling_bart.html#BartForConditionalGeneration)
+        - [T5 layer (self/cross)attention](https://huggingface.co/transformers/_modules/transformers/models/t5/modeling_t5.html#T5ForConditionalGeneration)
 * what is conditional generation?    
 ```python
 class BertIntermediate(nn.Module):

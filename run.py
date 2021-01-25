@@ -6,7 +6,7 @@ from transformers import BartTokenizer, BartConfig
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 from data import QAData
-from bart import MyBart
+from bart import MyBart, MyBart2
 from T5 import MyT5
 
 def run(args, logger):
@@ -31,11 +31,13 @@ def run(args, logger):
                 return {_convert(key):value for key, value in state_dict.items()}
             # model = MyBart.from_pretrained("bart-large",
             #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
-            model = MyT5.from_pretrained('t5-large')
+            # model = MyT5.from_pretrained('t5-large')
+            model = MyBart2.from_pretrained("bart-large",
+                                           state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
         else:
-            model = MyT5.from_pretrained('t5-large')
+            # model = MyT5.from_pretrained('t5-large')
             # model = MyBart.from_pretrained("bart-large")
-        if args.n_gpu>1:
+            model = MyBart2.from_pretrained("bart-large")
             model = torch.nn.DataParallel(model)
         if args.device:
             model.to(torch.device(args.device))
