@@ -7,6 +7,7 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 
 from data import QAData
 from bart import MyBart
+from T5 import MyT5
 
 def run(args, logger):
     tokenizer = BartTokenizer.from_pretrained("bart-large")
@@ -19,7 +20,7 @@ def run(args, logger):
 
     dev_data.load_dataset(tokenizer)
     dev_data.load_dataloader()
-
+    # args.device = 1
     if args.do_train:
         if args.checkpoint is not None:
             def convert_to_single_gpu(state_dict):
@@ -28,14 +29,17 @@ def run(args, logger):
                         return key[7:]
                     return key
                 return {_convert(key):value for key, value in state_dict.items()}
-            model = MyBart.from_pretrained("bart-large",
-                                           state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+            # model = MyBart.from_pretrained("bart-large",
+            #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+            model = MyT5.from_pretrained('t5-large')
         else:
-            model = MyBart.from_pretrained("bart-large")
+            model = MyT5.from_pretrained('t5-large')
+            # model = MyBart.from_pretrained("bart-large")
         if args.n_gpu>1:
             model = torch.nn.DataParallel(model)
-
-        if torch.cuda.is_available():
+        if args.device:
+            model.to(torch.device(args.device))
+        elif torch.cuda.is_available():
             model.to(torch.device("cuda"))
 
         no_decay = ['bias', 'LayerNorm.weight']
@@ -60,7 +64,9 @@ def run(args, logger):
         model = MyBart.from_pretrained("bart-large",
                                        state_dict=convert_to_single_gpu(torch.load(checkpoint)))
         logger.info("Loading checkpoint from {}".format(checkpoint))
-        if torch.cuda.is_available():
+        if args.single_gpu:
+            model.to(torch.device(args.device))
+        elif torch.cuda.is_available():
             model.to(torch.device("cuda"))
         model.eval()
         ems = inference(model, dev_data, save_predictions=True)
@@ -77,8 +83,13 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
     for epoch in range(int(args.num_train_epochs)):
         for batch in train_data.dataloader:
             global_step += 1
-            if torch.cuda.is_available():
+
+
+            if args.single_gpu:
+                batch = [b.to(torch.device(args.device)) for b in batch]
+            elif torch.cuda.is_available():
                 batch = [b.to(torch.device("cuda")) for b in batch]
+
             loss = model(input_ids=batch[0], attention_mask=batch[1],
                          decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
                          is_training=True)
@@ -99,7 +110,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
 
             if global_step % args.eval_period == 0:
                 model.eval()
-                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data)
+                curr_em = inference(model if args.single_gpu else model.module, dev_data, args.device if args.single_gpu else "cuda")
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
                         global_step,
                         np.mean(train_losses),
@@ -124,12 +135,15 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
         if stop_training:
             break
 
-def inference(model, dev_data, save_predictions=False):
+def inference(model, dev_data, device = "cuda", save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
+
+
+
     for i, batch in enumerate(dev_data.dataloader):
         if torch.cuda.is_available():
-            batch = [b.to(torch.device("cuda")) for b in batch]
+            batch = [b.to(torch.device(device)) for b in batch]
         outputs = model.generate(input_ids=batch[0],
                                  attention_mask=batch[1],
                                  num_beams=dev_data.args.num_beams,
