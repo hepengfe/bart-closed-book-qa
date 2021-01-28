@@ -25,17 +25,38 @@ python cli.py \
         --append_another_bos \
         --device cuda
 
+
+test----------------------------------------
 train_bs=1
 test_bs=1
 CUDA_VISIBLE_DEVICES=1 python cli.py \
-        --model t5 \
+        --model bart \
         --do_train --output_dir out/nq-t5-closed-qa \
         --train_file data/nqopen-train.json \
         --predict_file data/nqopen-dev.json \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
         --append_another_bos \
-        --device 1
+        --device 0 \
+        --gradient_cp True
+test2-------------------------------------
+train_bs=2
+test_bs=2
+python cli.py \
+        --model bart \
+        --do_train --output_dir out/nq-t5-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --append_another_bos \
+        --device cuda \
+        --gradient_cp True
+
+
+
+
+
 
 train_bs=64
 test_bs=64
@@ -60,7 +81,6 @@ python cli.py --do_train --output_dir out/nq-bart-closed-qa \
         --single_gpu True \
         --device 1
 """
-
 
 
 
@@ -137,6 +157,7 @@ def main():
                         help="random seed for initialization")
     parser.add_argument('--device', type=str, default="cuda")
     parser.add_argument('--n_gpu', type=int, default=0)
+    parser.add_argument('--gradient_cp', type=bool, default=False)
     args = parser.parse_args()
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         print("Output directory () already exists and is not empty.")

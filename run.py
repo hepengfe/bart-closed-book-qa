@@ -7,7 +7,7 @@ from transformers import BartTokenizer, BartConfig, T5Tokenizer, T5Config
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 from data import QAData
-from bart import MyBart, MyBart2
+from bart import MyBart, MyBartForCondGen
 from T5 import MyT5
 
 def run(args, logger):
@@ -37,10 +37,10 @@ def run(args, logger):
                     return key
                 return {_convert(key):value for key, value in state_dict.items()}
             if args.model.lower() == "bart":
-                model = MyBart.from_pretrained("bart-large",
-                                               state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
-                # model = MyBart2.from_pretrained("bart-large",
-            #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+                # model = MyBart.from_pretrained("bart-large",
+                #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+                model = MyBartForCondGen.from_pretrained("bart-large",
+                                           state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
 
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
@@ -51,8 +51,8 @@ def run(args, logger):
 
         else:
             if args.model.lower() == "bart":
-                model = MyBart.from_pretrained("bart-large")
-                # model = MyBart2.from_pretrained("bart-large")
+                # model = MyBart.from_pretrained("bart-large")
+                model = MyBartForCondGen.from_pretrained("bart-large")
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
                 model = MyT5.from_pretrained('t5-small')
@@ -60,7 +60,9 @@ def run(args, logger):
                 print("wrong model argument")
                 exit()
             model = torch.nn.DataParallel(model)
-            model.set_check_point_status(args.gradient_checkpoint)
+            # import pdb
+            # pdb.set_trace()
+            # model.module.set_gradient_cp(args.gradient_cp)
         # if args.device:
         model.to(torch.device(args.device))
         # elif torch.cuda.is_available():
