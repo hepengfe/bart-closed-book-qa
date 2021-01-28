@@ -30,7 +30,7 @@ test----------------------------------------
 train_bs=1
 test_bs=1
 CUDA_VISIBLE_DEVICES=1 python cli.py \
-        --model bart \
+        --model t5 \
         --do_train --output_dir out/nq-t5-closed-qa \
         --train_file data/nqopen-train.json \
         --predict_file data/nqopen-dev.json \

@@ -40,7 +40,7 @@ def run(args, logger):
                 # model = MyBart.from_pretrained("bart-large",
                 #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
                 model = MyBartForCondGen.from_pretrained("bart-large",
-                                           state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+                                                         state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
 
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
@@ -72,11 +72,11 @@ def run(args, logger):
         optimizer_grouped_parameters = [
             {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
             {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-            ]
+        ]
         optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
         scheduler =  get_linear_schedule_with_warmup(optimizer,
-                                        num_warmup_steps=args.warmup_steps,
-                                        num_training_steps=100000)
+                                                     num_warmup_steps=args.warmup_steps,
+                                                     num_training_steps=100000)
         train(args, logger, model, train_data, dev_data, optimizer, scheduler)
 
     if args.do_predict:
@@ -120,7 +120,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
 
             loss = model(input_ids=batch[0], attention_mask=batch[1],
                          decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
-                         is_training=True, check_point=True)
+                         is_training=True)
             if args.n_gpu > 1:
                 loss = loss.mean() # mean() to average on multi-gpu.
             if torch.isnan(loss).data:
@@ -141,18 +141,18 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 model.eval()
                 curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.device if args.n_gpu==1 else "cuda")
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
-                        global_step,
-                        np.mean(train_losses),
-                        dev_data.metric,
-                        curr_em*100,
-                        epoch))
+                    global_step,
+                    np.mean(train_losses),
+                    dev_data.metric,
+                    curr_em*100,
+                    epoch))
                 epoch_ems[epoch] = curr_em*100
                 train_losses = []
                 if best_accuracy < curr_em:
                     model_state_dict = {k:v.cpu() for (k, v) in model.state_dict().items()}
                     torch.save(model_state_dict, os.path.join(args.output_dir, "best-model.pt"))
                     logger.info("Saving model with best %s: %.2f%% -> %.2f%% on epoch=%d, global_step=%d" % \
-                            (dev_data.metric, best_accuracy*100.0, curr_em*100.0, epoch, global_step))
+                                (dev_data.metric, best_accuracy*100.0, curr_em*100.0, epoch, global_step))
                     best_accuracy = curr_em
                     wait_step = 0
                     stop_training = False

@@ -11,8 +11,8 @@ from torch.utils.checkpoint import checkpoint
 from typing import Dict, List, Optional, Tuple
 class MyBart(BartForConditionalGeneration):
     def forward(self, input_ids, attention_mask=None, encoder_outputs=None,
-            decoder_input_ids=None, decoder_attention_mask=None, decoder_cached_states=None,
-            use_cache=False, is_training=False):
+                decoder_input_ids=None, decoder_attention_mask=None, decoder_cached_states=None,
+                use_cache=False, is_training=False):
         """
         Return loss for training mode and return outputs for evaluation mode
         :param input_ids:
@@ -44,7 +44,7 @@ class MyBart(BartForConditionalGeneration):
         if is_training:
             loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
             loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
-                              decoder_input_ids.view(-1))
+                            decoder_input_ids.view(-1))
             return loss
         return (lm_logits, ) + outputs[1:]
 
@@ -277,13 +277,13 @@ class MyBartForCondGen(BartForConditionalGeneration):
 
 
 
-        # lm_logits = F.linear(outputs[0], self.model.shared.weight, bias=self.final_logits_bias)
-        # if is_training:
-        #     loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
-        #     loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
-        #                     decoder_input_ids.view(-1))
-        #     return loss
-        # return (lm_logits, ) + outputs[1:]
+    # lm_logits = F.linear(outputs[0], self.model.shared.weight, bias=self.final_logits_bias)
+    # if is_training:
+    #     loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
+    #     loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
+    #                     decoder_input_ids.view(-1))
+    #     return loss
+    # return (lm_logits, ) + outputs[1:]
 
 # class MyBartForConditionalGeneration(BartForConditionalGeneration):
 #     def forward(
