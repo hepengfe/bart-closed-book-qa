@@ -15,13 +15,38 @@
 """
 train_bs=64
 test_bs=64
-python cli.py --do_train --output_dir out/nq-bart-closed-qa \
+python cli.py \
+        --model t5 \
+        --do_train --output_dir out/nq-t5-closed-qa \
         --train_file data/nqopen-train.json \
         --predict_file data/nqopen-dev.json \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
         --append_another_bos \
-        --checkpoint out/nq-bart-closed-qa/best-model.pt
+        --device cuda
+
+train_bs=1
+test_bs=1
+CUDA_VISIBLE_DEVICES=1 python cli.py \
+        --model t5 \
+        --do_train --output_dir out/nq-t5-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --append_another_bos \
+        --device 1
+
+train_bs=64
+test_bs=64
+python cli.py --do_train --output_dir out/nq-t5-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --append_another_bos \
+        --checkpoint out/nq-t5-closed-qa/best-model.pt
+        --device cuda
 
 train_bs=5
 test_bs=5
@@ -65,6 +90,7 @@ def main():
     parser.add_argument("--do_predict", action='store_true')
 
     ## Model parameters
+    parser.add_argument("--model", type=str, default="bart")
     parser.add_argument("--checkpoint", type=str)
     parser.add_argument("--do_lowercase", action='store_true', default=True)
 
@@ -109,8 +135,8 @@ def main():
                         help="Use a subset of data for debugging")
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
-    parser.add_argument('--device', type=int, default=None)
-    parser.add_argument('--single_gpu', type=bool ,default=False)
+    parser.add_argument('--device', type=str, default="cuda")
+    parser.add_argument('--n_gpu', type=int, default=0)
     args = parser.parse_args()
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         print("Output directory () already exists and is not empty.")
@@ -133,10 +159,18 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    if args.device:
-        args.n_gpu = 1  # if one device is specified, then set n_gpu to be 1
-    else:
+    args.single_gpu = False
+    if args.device == "cuda": # use all gpus by default
         args.n_gpu = torch.cuda.device_count()
+
+        # args.device = "cuda"
+
+    elif args.device == "cpu":
+        args.device = "cpu"
+    else:
+         # indicate it wants to use specific gpu
+        args.device = int(args.device)
+        args.n_gpu = 1
 
     # if args.n_gpu > 0:
     #     torch.cuda.manual_seed_all(args.seed)
