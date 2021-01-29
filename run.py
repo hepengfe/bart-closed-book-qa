@@ -37,10 +37,10 @@ def run(args, logger):
                     return key
                 return {_convert(key):value for key, value in state_dict.items()}
             if args.model.lower() == "bart":
-                # model = MyBart.from_pretrained("bart-large",
-                #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
-                model = MyBartForCondGen.from_pretrained("bart-large",
-                                                         state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+                model = MyBart.from_pretrained("bart-large",
+                                               state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+                # model = MyBartForCondGen.from_pretrained("bart-large",
+                #                                          state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
 
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
@@ -51,18 +51,18 @@ def run(args, logger):
 
         else:
             if args.model.lower() == "bart":
-                # model = MyBart.from_pretrained("bart-large")
-                model = MyBartForCondGen.from_pretrained("bart-large")
+                model = MyBart.from_pretrained("bart-large")
+                # model = MyBartForCondGen.from_pretrained("bart-large")
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
                 model = MyT5.from_pretrained('t5-small')
             else:
                 print("wrong model argument")
                 exit()
-            model = torch.nn.DataParallel(model)
-            # import pdb
-            # pdb.set_trace()
-            # model.module.set_gradient_cp(args.gradient_cp)
+            # model = torch.nn.DataParallel(model)
+
+
+
         # if args.device:
         model.to(torch.device(args.device))
         # elif torch.cuda.is_available():
@@ -81,6 +81,7 @@ def run(args, logger):
 
     if args.do_predict:
         checkpoint = os.path.join(args.output_dir, 'best-model.pt')
+        checkpoint_stat = os.path.join(args.output_dir, '')
         def convert_to_single_gpu(state_dict):
             def _convert(key):
                 if key.startswith('module.'):
@@ -121,6 +122,8 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
             loss = model(input_ids=batch[0], attention_mask=batch[1],
                          decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
                          is_training=True)
+            # import pdb
+            # pdb.set_trace()
             if args.n_gpu > 1:
                 loss = loss.mean() # mean() to average on multi-gpu.
             if torch.isnan(loss).data:
@@ -146,7 +149,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                     dev_data.metric,
                     curr_em*100,
                     epoch))
-                epoch_ems[epoch] = curr_em*100
+                epoch_ems[epoch] = str(curr_em*100)
                 train_losses = []
                 if best_accuracy < curr_em:
                     model_state_dict = {k:v.cpu() for (k, v) in model.state_dict().items()}
@@ -162,8 +165,8 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                         stop_training = True
                         break
                 model.train()
-            epoch_losses[epoch] = np.mean(np.mean(train_losses))
-        with open(f"{args.model}_bs{args.train_batch_size}.json") as fp:
+            epoch_losses[epoch] = str(np.mean(train_losses))
+        with open(os.path.join(args.output_dir, f"{args.model}_bs{args.train_batch_size}.json") , "w") as fp:
             json.dump(epoch_losses, fp)
             json.dump(epoch_ems, fp)
         if stop_training:

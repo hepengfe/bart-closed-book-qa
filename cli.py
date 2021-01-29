@@ -26,6 +26,7 @@ python cli.py \
         --device cuda
 
 
+
 test----------------------------------------
 train_bs=1
 test_bs=1
@@ -39,6 +40,7 @@ CUDA_VISIBLE_DEVICES=1 python cli.py \
         --append_another_bos \
         --device 0 \
         --gradient_cp True
+
 test2-------------------------------------
 train_bs=2
 test_bs=2
@@ -57,29 +59,32 @@ python cli.py \
 
 
 
-
-train_bs=64
-test_bs=64
-python cli.py --do_train --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --append_another_bos \
-        --checkpoint out/nq-t5-closed-qa/best-model.pt
-        --device cuda
-
-train_bs=5
-test_bs=5
+bart continue training-------------------
+train_bs=130
+test_bs=130
 python cli.py --do_train --output_dir out/nq-bart-closed-qa \
+        --model bart\
         --train_file data/nqopen-train.json \
         --predict_file data/nqopen-dev.json \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
         --append_another_bos \
         --checkpoint out/nq-bart-closed-qa/best-model.pt \
-        --single_gpu True \
-        --device 1
+        --device cuda \
+        --gradient_cp False
+
+train_bs=5
+test_bs=5
+python cli.py --do_train --output_dir out/nq-bart-closed-qa \
+        --model bart
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --append_another_bos \
+        --checkpoint out/nq-bart-closed-qa/best-model.pt \
+        --device cuda \
+        --gradient_cp Fasle
 """
 
 
@@ -137,8 +142,10 @@ def main():
                         help="Max gradient norm.")
     parser.add_argument("--gradient_accumulation_steps", default=1, type=int,
                         help="Max gradient norm.")
+    parser.add_argument("--starting_epoch", default=0, type=int, help="When restart from checkpoint, epoch will be overwritten to the correct one.")
     parser.add_argument("--num_train_epochs", default=10000.0, type=float,
                         help="Total number of training epochs to perform.")
+
     parser.add_argument("--warmup_steps", default=0, type=int,
                         help="Linear warmup over warmup_steps.")
     parser.add_argument('--wait_step', type=int, default=10)
