@@ -81,7 +81,7 @@ def run(args, logger):
 
     if args.do_predict:
         checkpoint = os.path.join(args.output_dir, 'best-model.pt')
-        checkpoint_stat = os.path.join(args.output_dir, '')
+
         def convert_to_single_gpu(state_dict):
             def _convert(key):
                 if key.startswith('module.'):
@@ -108,8 +108,20 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
     best_accuracy = -1
     stop_training=False
 
+    # reload some training status if
+    if args.checkpoint is not None:
+        with open(os.path.join(args.output_dir, 'checkpoint_stat.json'), "r") as fp:
+            checkpoint_stat = json.load(fp)
+
+        args.start_epoch = checkpoint_stat["best_epoch"]
+        best_accuracy = checkpoint_stat["best_em_accuracy"]
+        global_step = checkpoint_stat["global_step"]
+
+
+
+    checkpoint_stat = dict()
     logger.info("Starting training!")
-    for epoch in range(int(args.num_train_epochs)):
+    for epoch in range(int(args.start_epoch), int(args.num_train_epochs)):
         for batch in train_data.dataloader:
             global_step += 1
 
@@ -154,6 +166,11 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 if best_accuracy < curr_em:
                     model_state_dict = {k:v.cpu() for (k, v) in model.state_dict().items()}
                     torch.save(model_state_dict, os.path.join(args.output_dir, "best-model.pt"))
+                    checkpoint_stat["best_epoch"] = epoch
+                    checkpoint_stat["best_em_accuracy"] = curr_em
+                    checkpoint_stat["global_step"] = global_step
+                    with open(os.path.join(args.output_dir, 'checkpoint_stat.json'), "w") as fp:
+                        json.dump(checkpoint_stat, fp)
                     logger.info("Saving model with best %s: %.2f%% -> %.2f%% on epoch=%d, global_step=%d" % \
                                 (dev_data.metric, best_accuracy*100.0, curr_em*100.0, epoch, global_step))
                     best_accuracy = curr_em
