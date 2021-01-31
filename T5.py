@@ -286,35 +286,43 @@ class MyT5(T5ForConditionalGeneration):
     def __init__(self, config):
         super().__init__(config)
 
-        gradient_cp = True
+        self.gradient_cp = False
 
 
         # overwrite default T5stack class if gradient_cp is True
-        if gradient_cp:
+        if self.gradient_cp:
             self.encoder = T5StackCP(self.config, self.shared)
             self.decoder = T5StackCP(self.config, self.shared)
             self.init_weights()
 
-    def forward(self, input_ids, attention_mask=None, encoder_outputs=None,
-                decoder_input_ids=None, decoder_attention_mask=None, decoder_cached_states=None,
-                use_cache=False, is_training=False):
-        """
-        Assume it's
-        :param input_ids:
-        :param attention_mask:
-        :param encoder_outputs:
-        :param decoder_input_ids:
-        :param decoder_attention_mask:
-        :param decoder_cached_states:
-        :param use_cache:
-        :param is_training:
-        :return:
-        """
+    # def forward(self, input_ids, attention_mask=None, encoder_outputs=None,
+    #             decoder_input_ids=None, decoder_attention_mask=None, decoder_cached_states=None,
+    #             use_cache=False, is_training=False):
+    #     """
+    #     Assume it's
+    #     :param input_ids:
+    #     :param attention_mask:
+    #     :param encoder_outputs:
+    #     :param decoder_input_ids:
+    #     :param decoder_attention_mask:
+    #     :param decoder_cached_states:
+    #     :param use_cache:
+    #     :param is_training:
+    #     :return:
+    #     """
+    def forward(self, input_ids = None,
+                attention_mask = None,
+                encoder_outputs = None,
+                decoder_input_ids=None,
+                decoder_attention_mask=None,
+                decoder_past_key_value_states=None,
+                use_cache=False,
+                is_training = False):
         if is_training:
             _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
         else:
             _decoder_input_ids = decoder_input_ids
-        if check_point:
+        if self.gradient_cp:
 
             outputs = cp_forward(
                 input_ids=input_ids,
@@ -322,17 +330,19 @@ class MyT5(T5ForConditionalGeneration):
                 encoder_outputs=encoder_outputs,
                 decoder_input_ids=_decoder_input_ids,
                 decoder_attention_mask=decoder_attention_mask,
-                decoder_past_key_value_states=decoder_cached_states,
+                decoder_past_key_value_states=decoder_past_key_value_states,
                 use_cache=use_cache
             )
         else:
+            # import pdb
+            # pdb.set_trace()
             # TODO: pending check
-            outputs = super.forward(input_ids=input_ids,
+            outputs = super(MyT5, self).forward(input_ids=input_ids,
                                     attention_mask=attention_mask,
                                     encoder_outputs=encoder_outputs,
                                     decoder_input_ids=_decoder_input_ids,
                                     decoder_attention_mask=decoder_attention_mask,
-                                    decoder_past_key_value_states=decoder_cached_states,
+                                    decoder_past_key_value_states=decoder_past_key_value_states,
                                     use_cache=use_cache)
 
         # import pdb

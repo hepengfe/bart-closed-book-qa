@@ -44,7 +44,7 @@ def run(args, logger):
 
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
-                model = MyT5.from_pretrained('t5-small')
+                model = MyT5.from_pretrained('t5-base')
             else:
                 print("wrong model argument")
                 exit()
@@ -55,7 +55,7 @@ def run(args, logger):
                 # model = MyBartForCondGen.from_pretrained("bart-large")
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
-                model = MyT5.from_pretrained('t5-small')
+                model = MyT5.from_pretrained('t5-base')
             else:
                 print("wrong model argument")
                 exit()
@@ -154,7 +154,9 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
 
             if global_step % args.eval_period == 0:
                 model.eval()
-                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.device if args.n_gpu==1 else "cuda")
+                # import pdb
+                # pdb.set_trace()
+                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.device if args.n_gpu==1 else "cuda", True)
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
                     global_step,
                     np.mean(train_losses),
@@ -206,6 +208,7 @@ def inference(model, dev_data, device = "cuda", save_predictions=False):
         for input_, output in zip(batch[0], outputs):
             pred = dev_data.decode(output)
             predictions.append(pred)
+
     if save_predictions:
         dev_data.save_predictions(predictions)
     return np.mean(dev_data.evaluate(predictions))

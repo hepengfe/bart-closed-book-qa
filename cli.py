@@ -62,7 +62,8 @@ python cli.py \
 bart continue training-------------------
 train_bs=130
 test_bs=130
-python cli.py --do_train --output_dir out/nq-bart-closed-qa \
+python cli.py
+        --do_train --output_dir out/nq-bart-closed-qa \
         --model bart\
         --train_file data/nqopen-train.json \
         --predict_file data/nqopen-dev.json \
@@ -73,18 +74,40 @@ python cli.py --do_train --output_dir out/nq-bart-closed-qa \
         --device cuda \
         --gradient_cp False
 
-train_bs=5
-test_bs=5
-python cli.py --do_train --output_dir out/nq-bart-closed-qa \
-        --model bart
+t5 training-----------------------------------
+train_bs=170
+test_bs=170
+python cli.py \
+        --model t5 \
+        --do_train --output_dir out/nq-t5-closed-qa \
         --train_file data/nqopen-train.json \
         --predict_file data/nqopen-dev.json \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
         --append_another_bos \
-        --checkpoint out/nq-bart-closed-qa/best-model.pt \
         --device cuda \
-        --gradient_cp Fasle
+        --gradient_cp False
+
+
+train_bs=180
+test_bs=180
+python cli.py \
+        --model t5 \
+        --do_train --output_dir out/nq-t5-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --device cuda \
+        --gradient_cp False
+
+eval-------------------------------
+test_bs=100
+python cli.py --do_predict --output_dir out/nq-bart-closed-qa \
+        --predict_file data/nqopen-test.json \
+        --predict_batch_size ${test_bs} \
+        --append_another_bos --prefix test_
+
 """
 
 
@@ -142,7 +165,7 @@ def main():
                         help="Max gradient norm.")
     parser.add_argument("--gradient_accumulation_steps", default=1, type=int,
                         help="Max gradient norm.")
-    parser.add_argument("--starting_epoch", default=0, type=int, help="When restart from checkpoint, epoch will be overwritten to the correct one.")
+    parser.add_argument("--start_epoch", default=0, type=int, help="When restart from checkpoint, epoch will be overwritten to the correct one.")
     parser.add_argument("--num_train_epochs", default=10000.0, type=float,
                         help="Total number of training epochs to perform.")
 
