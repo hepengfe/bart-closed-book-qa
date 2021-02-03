@@ -1,7 +1,7 @@
 from transformers import T5ForConditionalGeneration
 
 # from transformers.modeling_outputs import Seq2SeqLMOutput
-from transformers.modeling_bart import shift_tokens_right
+# from transformers.modeling_bart import shift_tokens_right
 from transformers.modeling_t5 import T5PreTrainedModel, T5Stack
 import torch
 import torch.nn.functional as F
@@ -317,11 +317,15 @@ class MyT5(T5ForConditionalGeneration):
                 decoder_attention_mask=None,
                 decoder_past_key_value_states=None,
                 use_cache=False,
+                lm_labels=None,
+                inputs_embeds=None,
+                decoder_inputs_embeds=None,
+                head_mask=None,
                 is_training = False):
-        if is_training:
-            _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
-        else:
-            _decoder_input_ids = decoder_input_ids
+        # if is_training:
+        #     _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
+        # else:
+        #     _decoder_input_ids = decoder_input_ids
         if self.gradient_cp:
 
             outputs = cp_forward(
@@ -334,24 +338,148 @@ class MyT5(T5ForConditionalGeneration):
                 use_cache=use_cache
             )
         else:
-            # import pdb
-            # pdb.set_trace()
-            # TODO: pending check
-            outputs = super(MyT5, self).forward(input_ids=input_ids,
-                                    attention_mask=attention_mask,
-                                    encoder_outputs=encoder_outputs,
-                                    decoder_input_ids=_decoder_input_ids,
-                                    decoder_attention_mask=decoder_attention_mask,
-                                    decoder_past_key_value_states=decoder_past_key_value_states,
-                                    use_cache=use_cache)
+            if encoder_outputs is None:
+                # Convert encoder inputs in embeddings if needed
+                encoder_outputs = self.encoder(
+                    input_ids=input_ids, attention_mask=attention_mask, inputs_embeds=inputs_embeds, head_mask=head_mask
+                )
 
-        # import pdb
-        # pdb.set_trace()
-        # lm_logits = F.linear(outputs[0], self.shared.weight.T) # remove bias=self.final_logits_bias from the argument
-        lm_logits = outputs[0]
-        if is_training:
-            loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
-            loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
-                            decoder_input_ids.view(-1))
-            return loss
-        return (lm_logits, ) + outputs[1:]
+            hidden_states = encoder_outputs[0]
+
+            if lm_labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
+                # get decoder inputs from shifting lm labels to the right
+                decoder_input_ids = self._shift_right(lm_labels)
+
+
+
+            # If decoding with past key value states, only the last tokens
+            # should be given as an input
+            if decoder_past_key_value_states is not None:
+                assert lm_labels is None, "Decoder should not use cached key value states when training."
+                if decoder_input_ids is not None:
+                    decoder_input_ids = decoder_input_ids[:, -1:]
+                if decoder_inputs_embeds is not None:
+                    decoder_inputs_embeds = decoder_inputs_embeds[:, -1:]
+
+            # Decode
+            decoder_outputs = self.decoder(
+                input_ids=decoder_input_ids,
+                attention_mask=decoder_attention_mask,
+                inputs_embeds=decoder_inputs_embeds,
+                past_key_value_states=decoder_past_key_value_states,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                head_mask=head_mask,
+                use_cache=use_cache,
+            )
+
+            # insert decoder past at right place
+            # to speed up decoding
+            if use_cache is True:
+                # import pdb
+                # pdb.set_trace()
+                past = ((encoder_outputs, decoder_outputs[1]),)
+                decoder_outputs = decoder_outputs[:1] + past + decoder_outputs[2:]
+
+            sequence_output = decoder_outputs[0]
+            # Rescale output before projecting on vocab
+            # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
+            sequence_output = sequence_output * (self.model_dim ** -0.5)
+            lm_logits = self.lm_head(sequence_output)
+
+            decoder_outputs = (lm_logits,) + decoder_outputs[1:]  # Add hidden states and attention if they are here
+            if lm_labels is not None:  #TODO: check if it is correct
+            # if is_training:
+                loss_fct = CrossEntropyLoss(reduction="sum",ignore_index=-100)
+                loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), decoder_input_ids.view(-1))
+                # decoder_outputs = (loss,) + decoder_outputs
+                # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/:blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
+                # if not is_training:
+                #     import pdb
+                #     pdb.set_trace()
+                if is_training:
+                    return loss
+
+
+
+
+            # both decoder outputs and encoder outputs are tuple with length 1.
+            # So this method return concatenation of the three tuples
+            # return (lm_logits,) + decoder_outputs + encoder_outputs
+
+            return  decoder_outputs +encoder_outputs
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        #     # import pdb
+        #     # pdb.set_trace()
+        #     # TODO: pending check
+        #     outputs = super(MyT5, self).forward(input_ids=input_ids,
+        #                             attention_mask=attention_mask,
+        #                             encoder_outputs=encoder_outputs,
+        #                             decoder_input_ids=_decoder_input_ids,
+        #                             decoder_attention_mask=decoder_attention_mask,
+        #                             decoder_past_key_value_states=decoder_past_key_value_states,
+        #                             use_cache=use_cache)
+        #
+        # loss = outputs[0]
+        # if is_training:
+        #     return loss
+        # # import pdb
+        # # pdb.set_trace()
+        # # lm_logits = F.linear(outputs[0], self.shared.weight.T) # remove bias=self.final_logits_bias from the argument
+        # # # lm_logits = outputs[0]
+        # # if is_training:
+        # #     # loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
+        # #     # loss = loss_fct(lm_logits.view(-1),decoder_input_ids.view(-1))
+        # #
+        # #     loss = loss_fct(lm_logits.view(-1),decoder_input_ids.view(-1))
+        # #     # loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
+        # #     #                 decoder_input_ids.view(-1))
+        # #     return loss
+        # return (lm_logits, ) + outputs[1:]
+        #
+
+
+
+
+
+
+
+#
+# if is_training:
+#     _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
+# else:
+#     _decoder_input_ids = decoder_input_ids
+#
+# outputs = self.model(
+#     input_ids,
+#     attention_mask=attention_mask,
+#     encoder_outputs=encoder_outputs,
+#     decoder_input_ids=_decoder_input_ids,
+#     decoder_attention_mask=decoder_attention_mask,
+#     decoder_cached_states=decoder_cached_states,
+#     use_cache=use_cache,
+# )
+#
+# lm_logits = F.linear(outputs[0], self.model.shared.weight, bias=self.final_logits_bias)
+#
+# if is_training:
+#     loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
+#     loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
+#                     decoder_input_ids.view(-1))
+#     return loss
+# return (lm_logits, ) + outputs[1:]
+

@@ -25,7 +25,7 @@ def plot(args):
         print("ys: ", ys)
         plt.plot( xs, ys)
         plt.xlabel("epochs")
-        plt.ylabel("train_stat_name")
+        plt.ylabel(train_stat_name)
         ys_float = [float(y) for y in ys]
 
         # print(ys_float)

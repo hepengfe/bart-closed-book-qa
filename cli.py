@@ -75,23 +75,23 @@ python cli.py
         --gradient_cp False
 
 t5 training-----------------------------------
-train_bs=170
-test_bs=170
-python cli.py \
-        --model t5 \
-        --do_train --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --append_another_bos \
-        --device cuda \
-        --gradient_cp False
+# train_bs=180
+# test_bs=180
+# python cli.py \
+#         --model t5 \
+#         --do_train --output_dir out/nq-t5-closed-qa \
+#         --train_file data/nqopen-train.json \
+#         --predict_file data/nqopen-dev.json \
+#         --train_batch_size ${train_bs} \
+#         --predict_batch_size ${test_bs} \
+#         --append_another_bos \
+#         --device cuda \
+#         --gradient_cp False
 
 
 train_bs=180
 test_bs=180
-python cli.py \
+CUDA_VIDIABLE_DEVICES=0  python cli.py \
         --model t5 \
         --do_train --output_dir out/nq-t5-closed-qa \
         --train_file data/nqopen-train.json \
@@ -99,14 +99,25 @@ python cli.py \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
         --device cuda \
-        --gradient_cp False
+        --gradient_cp False \
+        --eval_period 1
 
-eval-------------------------------
-test_bs=100
-python cli.py --do_predict --output_dir out/nq-bart-closed-qa \
-        --predict_file data/nqopen-test.json \
+
+
+
+--------------------To reproduce T5 bug
+train_bs=250
+test_bs=250
+python cli.py \
+        --model t5 \
+        --do_train --output_dir out/nq-t5-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
-        --append_another_bos --prefix test_
+        --device 0 \
+        --gradient_cp False \
+        --eval_period 1000 
 
 """
 
@@ -147,6 +158,7 @@ def main():
     parser.add_argument('--max_output_length', type=int, default=20)
     parser.add_argument('--num_beams', type=int, default=4)
     parser.add_argument("--append_another_bos", action='store_true', default=False)
+    parser.add_argument("--prepend_question_token", default = False)
 
     # Training-related parameters
     parser.add_argument("--train_batch_size", default=40, type=int,
@@ -185,7 +197,7 @@ def main():
                         help="Use a subset of data for debugging")
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
-    parser.add_argument('--device', type=str, default="cuda")
+    parser.add_argument('--device', type=str, default="cuda", help="Can be set to cpu or cuda or device number")
     parser.add_argument('--n_gpu', type=int, default=0)
     parser.add_argument('--gradient_cp', type=bool, default=False)
     args = parser.parse_args()
@@ -237,6 +249,10 @@ def main():
     if args.do_predict:
         if not args.predict_file:
             raise ValueError("If `do_predict` is True, then `predict_file` must be specified.")
+
+    if args.model.lower() == "t5" and args.prepend_question_token == False:
+        logger.warning("t5 model needs prepending ")
+
 
     logger.info("Using {} gpus".format(args.n_gpu))
     run(args, logger)

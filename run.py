@@ -15,7 +15,7 @@ def run(args, logger):
         tokenizer = BartTokenizer.from_pretrained("bart-large")
     elif args.model.lower() == "t5":
         # tokenizer = T5Tokenizer.from_pretrained("t5-large")
-        tokenizer = T5Tokenizer.from_pretrained("t5-small")
+        tokenizer = T5Tokenizer.from_pretrained("t5-base")
     else:
         print("wrong model argument")
         exit()
@@ -59,11 +59,16 @@ def run(args, logger):
             else:
                 print("wrong model argument")
                 exit()
-            # model = torch.nn.DataParallel(model)
+            if args.device == "cuda" and torch.cuda.device_count() > 1:
+                if args.n_gpu == 1:
+                    logger.warning("User specified one gpu but there are actually {}, it has been corrected".format(torch.cuda.device_count()))
+                    args.n_gpu = torch.cuda.device_count()
+                model = torch.nn.DataParallel(model)
 
 
 
         # if args.device:
+
         model.to(torch.device(args.device))
         # elif torch.cuda.is_available():
         #     model.to(torch.device("cuda"))
@@ -130,10 +135,11 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
             batch = [b.to(torch.device(args.device)) for b in batch]
             # elif torch.cuda.is_available():
             #     batch = [b.to(torch.device("cuda")) for b in batch]
-
             loss = model(input_ids=batch[0], attention_mask=batch[1],
                          decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
+                         lm_labels=batch[2],
                          is_training=True)
+
             # import pdb
             # pdb.set_trace()
             if args.n_gpu > 1:
@@ -156,7 +162,8 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 model.eval()
                 # import pdb
                 # pdb.set_trace()
-                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.device if args.n_gpu==1 else "cuda", True)
+
+                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.device, True)
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
                     global_step,
                     np.mean(train_losses),
@@ -205,6 +212,7 @@ def inference(model, dev_data, device = "cuda", save_predictions=False):
                                  num_beams=dev_data.args.num_beams,
                                  max_length=dev_data.args.max_output_length,
                                  early_stopping=True,)
+
         for input_, output in zip(batch[0], outputs):
             pred = dev_data.decode(output)
             predictions.append(pred)

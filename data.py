@@ -26,6 +26,7 @@ class QAData(object):
             for i in range(len(self.data)):
                 self.data[i]["id"] = str(self.data[i]["id"])
 
+
         self.index2id = {i:d["id"] for i, d in enumerate(self.data)}
         self.id2index = {d["id"]:i for i, d in enumerate(self.data)}
         self.is_training = is_training
@@ -83,6 +84,10 @@ class QAData(object):
             if self.args.do_lowercase:
                 questions = [question.lower() for question in questions]
                 answers = [answer.lower() for answer in answers]
+            append_qa_token = True
+            if append_qa_token:
+                # questions = ["question: "+question for question in questions]
+                questions = ["question: "+question for question in questions]
             if self.args.append_another_bos:
                 questions = ["<s> "+question for question in questions]
                 answers = ["<s> " +answer for answer in answers]
@@ -91,6 +96,7 @@ class QAData(object):
                                                          max_length=self.args.max_input_length)
             answer_input = tokenizer.batch_encode_plus(answers,
                                                        pad_to_max_length=True)
+
             input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
             decoder_input_ids, decoder_attention_mask = answer_input["input_ids"], answer_input["attention_mask"]
             if self.load:
