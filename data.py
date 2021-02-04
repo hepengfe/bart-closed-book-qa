@@ -91,6 +91,9 @@ class QAData(object):
             if self.args.append_another_bos:
                 questions = ["<s> "+question for question in questions]
                 answers = ["<s> " +answer for answer in answers]
+            if self.args.predict_type == "SpanSeqGen":
+
+
             question_input = tokenizer.batch_encode_plus(questions,
                                                          pad_to_max_length=True,
                                                          max_length=self.args.max_input_length)

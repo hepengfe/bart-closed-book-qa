@@ -101,7 +101,7 @@ def run(args, logger):
         # elif torch.cuda.is_available():
         #     model.to(torch.device("cuda"))
         model.eval()
-        ems = inference(model, dev_data, save_predictions=True)
+        ems = inference(model, dev_data, args.predict_type , save_predictions=True)
         logger.info("%s on %s data: %.2f" % (dev_data.metric, dev_data.data_type, np.mean(ems)*100))
 
 def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
@@ -198,15 +198,22 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
         if stop_training:
             break
 
-def inference(model, dev_data, device = "cuda", save_predictions=False):
+def inference(model, dev_data, predict_type, device = "cuda", save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
 
-
+    # if predict_type == "thresholding":
+    #     # generate answer
+    #
+    # elif predict_type == "SpanSeqGen":
+    #     print("not implemented yet")
+    #     exit()
 
     for i, batch in enumerate(dev_data.dataloader):
         if torch.cuda.is_available():
             batch = [b.to(torch.device(device)) for b in batch]
+            import pdb
+            pdb.set_trace()
         outputs = model.generate(input_ids=batch[0],
                                  attention_mask=batch[1],
                                  num_beams=dev_data.args.num_beams,
@@ -222,7 +229,30 @@ def inference(model, dev_data, device = "cuda", save_predictions=False):
     return np.mean(dev_data.evaluate(predictions))
 
 
-
+"""
+python cli.py \
+        --model bart \
+        --do_predict \
+        --predict_type thresholding \
+        --output_dir out/nq-t5-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --append_another_bos \
+        --device 0
+        
+python cli.py \
+        --model bart \
+        --do_predict \
+        --predict_type thresholding \
+        --output_dir out/nq-bart-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --predict_batch_size ${test_bs} \
+        --append_another_bos \
+        --device 0
+"""
 
 
 

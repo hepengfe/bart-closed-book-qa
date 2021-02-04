@@ -118,7 +118,6 @@ python cli.py \
         --device 0 \
         --gradient_cp False \
         --eval_period 1000 
-
 """
 
 
@@ -147,6 +146,8 @@ def main():
     parser.add_argument("--output_dir", default=None, type=str, required=True)
     parser.add_argument("--do_train", action='store_true')
     parser.add_argument("--do_predict", action='store_true')
+    parser.add_argument("--predict_type", default="thresholding", type=str)
+
 
     ## Model parameters
     parser.add_argument("--model", type=str, default="bart")
