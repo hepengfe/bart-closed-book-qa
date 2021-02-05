@@ -137,7 +137,6 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
             #     batch = [b.to(torch.device("cuda")) for b in batch]
             loss = model(input_ids=batch[0], attention_mask=batch[1],
                          decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
-                         lm_labels=batch[2],
                          is_training=True)
 
             # import pdb

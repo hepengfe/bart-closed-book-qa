@@ -118,6 +118,21 @@ python cli.py \
         --device 0 \
         --gradient_cp False \
         --eval_period 1000 
+
+
+--------------------To generate text
+train_bs=150
+test_bs=150
+python cli.py \
+        --model bart \
+        --do_train --output_dir out/nq-bart-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --device 0 \
+        --gradient_cp False \
+        --eval_period 1000 
 """
 
 
