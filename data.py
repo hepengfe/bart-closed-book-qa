@@ -4,7 +4,7 @@ import re
 import string
 import numpy as np
 from tqdm import tqdm
-
+from baseline import topKPassasages
 import torch
 from torch.utils.data import Dataset, TensorDataset, DataLoader, RandomSampler, SequentialSampler
 
@@ -15,7 +15,7 @@ class QAData(object):
         if args.debug:
             self.data_path = data_path.replace("train", "dev")
         with open(self.data_path, "r") as f:
-            self.data = json.load(f)
+            self.data = json.load(f)  # format example: [ {'id': '-8178292525996414464', 'question': 'big little lies season 2 how many episodes', 'answer': ['seven']}, ..... ]
         if type(self.data)==dict:
             self.data = self.data["data"]
         if args.debug:
@@ -25,6 +25,7 @@ class QAData(object):
         if type(self.data[0]["id"])==int:
             for i in range(len(self.data)):
                 self.data[i]["id"] = str(self.data[i]["id"])
+                 
 
 
         self.index2id = {i:d["id"] for i, d in enumerate(self.data)}
@@ -47,6 +48,14 @@ class QAData(object):
         self.dataset = None
         self.dataloader = None
         self.cache = None
+        self.concatenateQA = False
+        if args.predict_type == "SpanSeqGen":
+            self.concatenateQA = True
+            k = args.top_k
+            wiki_passage_path = args.passages_path
+            ranking_path = args.ranking_path
+            data_path = args.data_path
+            self.passages = topKPassasages(k, wiki_passage_path, ranking_path, data_path)
 
     def __len__(self):
         return len(self.data)
@@ -62,10 +71,12 @@ class QAData(object):
         for answer in answers:
             metadata.append((len(new_answers), len(new_answers)+len(answer)))
             new_answers += answer
+            
         return new_answers, metadata
 
     def load_dataset(self, tokenizer, do_return=False):
         self.tokenizer = tokenizer
+        tokenizer.add_tokens(["<SEP>"])
         postfix = tokenizer.__class__.__name__.replace("zer", "zed")
         preprocessed_path = os.path.join(
             "/".join(self.data_path.split("/")[:-1]),
@@ -84,14 +95,27 @@ class QAData(object):
             if self.args.do_lowercase:
                 questions = [question.lower() for question in questions]
                 answers = [answer.lower() for answer in answers]
-            append_qa_token = True
-            if append_qa_token:
-                # questions = ["question: "+question for question in questions]
-                questions = ["question: "+question for question in questions]
-            if self.args.append_another_bos:
-                questions = ["<s> "+question for question in questions]
-                answers = ["<s> " +answer for answer in answers]
-            if self.args.predict_type == "SpanSeqGen":
+            if self.concatenateQA:
+                questions = ["<s> " + q for q in questions]
+
+                # TODO: add them to arguments
+                # note that after this questions are actually a concatenation of questions and passages
+                for i in range(len(questions)):
+                    for p in self.passages.get_passages(i): # add passage one by one
+                        questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
+                    questions[i] += " </s>"
+            else:
+                append_qa_token = True
+                if append_qa_token:
+                    # questions = ["question: "+question for question in questions]
+                    questions = ["question: "+question for question in questions]
+                if self.args.append_another_bos:
+                    questions = ["<s> "+question for question in questions]
+                    answers = ["<s> " +answer for answer in answers]
+
+
+
+
 
 
             question_input = tokenizer.batch_encode_plus(questions,

@@ -247,7 +247,6 @@ python cli.py \
         --do_predict \
         --predict_type thresholding \
         --output_dir out/nq-bart-closed-qa \
-        --train_file data/nqopen-train.json \
         --predict_file data/nqopen-dev.json \
         --predict_batch_size ${test_bs} \
         --append_another_bos \

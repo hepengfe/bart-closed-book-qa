@@ -207,6 +207,20 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir, exist_ok=True)
 
+
+    # parameters for SpanSeqGen
+    parser.add_argument("--top_k", default=100, type=int)
+    parser.add_argument("--ranking_path", default="data/reranking_results/nq_test.json")
+    parser.add_argument("--passages_path", default="data/psgs_w100.tsv")
+    parser.add_argument("--data_path", default="data/nqopen-test.json")  # TODO: integerate it later
+    parser.add_argument("--eval_recall", default=False)
+
+
+
+
+
+
+
     ##### Start writing logs
 
     log_filename = "{}log.txt".format("" if args.do_train else "eval_")

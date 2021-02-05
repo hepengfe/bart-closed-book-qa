@@ -2,42 +2,34 @@ import argparse
 
 import numpy as np
 import json
+import data
 from collections import defaultdict
-from data import normalize_answer
+from data import *
 from bart import MyBartModel
-# recall = defaultdict(list)  # default value is an empty list
-#
-# # TODO: load `data` (QA data)
-# # TODO: load `predictions` (retrieval predictions from DPR)
-# assert len(data)==len(predictions)
-#
-# for d, passage_indices in zip(data, predictions):
-#     assert len(passage_indices)==100
-#     answers = [normalize_answer(answer) for answer in d["answer"]]
-#     passages = [normalize_answer(wiki_db[passage_index]["text"]) for passage_index in passage_indices]
-#     for k in [1, 5, 10, 100]:
-#         recall[k].append(any([answer in passage for answer in answers for passage in passages[:k]]))
 
-# for k in [1, 5, 10, 100]:
-#     print ("Recall @ %d\t%.1f%%" % (k, 100*np.mean(recall[k])))
-
-
-
-
-# create a "retrieval results" class?
 
 class topKPassasages():
     """
-    This class serves as modular way of retrieving top k passages for reader
+    This class serves as modular way of retrieving top k passages of a question for reader
     """
     def __init__(self, k, passages_path, rank_path, data_path):
         # load wiki passages and store in dictionary
-        self.rank = self.load_ranks(rank_path)
-        self.answers = self.load_answer(data_path) # {id, question:text, answer:text}
-        self.passages = self.load_passages(passages_path) # a list of dictionary {title, text}
+        self.rank = self.load_ranks(rank_path) # a list of lists of passsages ids   [ [ 3,5,9 ], ...  ]
+        self.answers = self.load_answer(data_path) # {id:str, question:text, answer:text}
+        self.passages = self.load_passages(passages_path) # a list of dictionary {title:str, text:str}
         self.recall = self.evaluate_recall()
-
         self.topKRank(k)
+
+    def get_passages(self, i):
+        """
+        0-indexed based retrieval to get top k passages.
+        Note that rank, answers and passages are lists with the same length
+        :param i: index
+        :return: a list of passage dictionary {title:str, text:str}
+        """
+        # get rank prediction
+        return [self.passages[k] for r in self.ranks[i]]
+
 
     def topKRank(self, k=10):
         self.ranks = [r[:k] for r in self.ranks]
@@ -62,7 +54,6 @@ class topKPassasages():
         # load
         with open(rank_path, "r") as fp:
             ranks = json.load(fp)  # 0-indexed ranks
-            ranks = [r[:k] for r in ranks] # keep top 10 passage id
         return ranks
 
 
@@ -114,21 +105,28 @@ def select_passages(args):
 
 
 def predict(model, model_path=None):
-
+    pass
     # concatenate dataset
 
 
-    #  [CLS] question [SEP] title 1 [SEP] passage1 [SEP] title 2 …. Passage 10
+    # input: [CLS] question [SEP] title 1 [SEP] passage1 [SEP] title 2 …. Passage 10
     # predict answer based on the dataset
-    #
+    # Previous model only predict based on question (relying on model capacity)
 
+
+
+
+
+    # return the best span
+
+    # Q: do I use model from run?
 
 
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="t5", type=str)
+    parser.add_argument("--model", default="bart", type=str)
     parser.add_argument("--top_k", default=100, type=int)
     parser.add_argument("--ranking_path", default="data/reranking_results/nq_test.json")
     parser.add_argument("--passages_path", default="data/psgs_w100.tsv")
