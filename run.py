@@ -10,6 +10,12 @@ from data import QAData
 from bart import MyBart, MyBartForCondGen
 from T5 import MyT5
 
+"""TODO
+* Add pre-processed truncated text data. 
+* 
+"""
+
+
 def run(args, logger):
     if args.model.lower() == "bart":
         tokenizer = BartTokenizer.from_pretrained("bart-large")
@@ -19,15 +25,33 @@ def run(args, logger):
     else:
         print("wrong model argument")
         exit()
-    train_data = QAData(logger, args, args.train_file, True)
-    dev_data = QAData(logger, args, args.predict_file, False)
+    if args.do_tokenize:
+        # during the process train_data will be overwritten, so memory will be collected
+        for k in range(5, 15):
+            args.top_k = k
+            train_data = QAData(logger, args, args.train_file, "train")
+            dev_data = QAData(logger, args, args.predict_file, "dev")
 
-    train_data.load_dataset(tokenizer)
-    train_data.load_dataloader()
+            print("Pre-process training data")
+            train_data.load_dataset(tokenizer)
+            train_data.load_dataloader()
 
-    dev_data.load_dataset(tokenizer)
-    dev_data.load_dataloader()
-    # args.device = 1
+            print("Pre-process development data") 
+            dev_data.load_dataset(tokenizer)
+            dev_data.load_dataloader()
+        print("finished tokenization")
+        exit()
+    else:
+        train_data = QAData(logger, args, args.train_file, "train")
+        dev_data = QAData(logger, args, args.predict_file, "dev")
+
+        print("Pre-process training data")
+        train_data.load_dataset(tokenizer)
+        train_data.load_dataloader()
+
+        print("Pre-process development data") 
+        dev_data.load_dataset(tokenizer)
+        dev_data.load_dataloader()
     if args.do_train:
         if args.checkpoint is not None:
             def convert_to_single_gpu(state_dict):
@@ -37,8 +61,12 @@ def run(args, logger):
                     return key
                 return {_convert(key):value for key, value in state_dict.items()}
             if args.model.lower() == "bart":
-                model = MyBart.from_pretrained("bart-large",
-                                               state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+                # TODO: add flag that when there is more specialized token, 
+                
+                model = MyBart.from_pretrained("bart-large",  state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+
+                # model = MyBart.from_pretrained("bart-large",
+                #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
                 # model = MyBartForCondGen.from_pretrained("bart-large",
                 #                                          state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
 
@@ -51,7 +79,23 @@ def run(args, logger):
 
         else:
             if args.model.lower() == "bart":
-                model = MyBart.from_pretrained("bart-large")
+                # default_config = BartConfig.from_pretrained("bart-large")
+                # config = BartConfig.from_pretrained("bart-large", vocab_size = default_config.vocab_size + 1 ) 
+
+
+                config = BartConfig.from_pretrained("bart-large")
+                model = MyBart.from_pretrained("bart-large", config=config)
+
+
+                model.resize_token_embeddings(len(tokenizer)) 
+                # The new vector is added at the end of the embedding matrix
+                # set it to Randomly generated matrix
+
+                # model.model.shared.weight[-1, :] = torch.zeros([model.config.hidden_size])
+
+
+
+
                 # model = MyBartForCondGen.from_pretrained("bart-large")
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
@@ -132,7 +176,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
 
 
             # if args.single_gpu:
-            batch = [b.to(torch.device(args.device)) for b in batch]
+            batch = [b.to(args.device) for b in batch]
             # elif torch.cuda.is_available():
             #     batch = [b.to(torch.device("cuda")) for b in batch]
             loss = model(input_ids=batch[0], attention_mask=batch[1],
@@ -162,7 +206,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 # import pdb
                 # pdb.set_trace()
 
-                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.device, True)
+                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.device, device = args.device, save_predictions=True)
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
                     global_step,
                     np.mean(train_losses),
@@ -207,12 +251,10 @@ def inference(model, dev_data, predict_type, device = "cuda", save_predictions=F
     # elif predict_type == "SpanSeqGen":
     #     print("not implemented yet")
     #     exit()
-
+    
     for i, batch in enumerate(dev_data.dataloader):
         if torch.cuda.is_available():
-            batch = [b.to(torch.device(device)) for b in batch]
-            import pdb
-            pdb.set_trace()
+            batch = [b.to(device) for b in batch]
         outputs = model.generate(input_ids=batch[0],
                                  attention_mask=batch[1],
                                  num_beams=dev_data.args.num_beams,
@@ -228,29 +270,7 @@ def inference(model, dev_data, predict_type, device = "cuda", save_predictions=F
     return np.mean(dev_data.evaluate(predictions))
 
 
-"""
-python cli.py \
-        --model bart \
-        --do_predict \
-        --predict_type thresholding \
-        --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --append_another_bos \
-        --device 0
-        
-python cli.py \
-        --model bart \
-        --do_predict \
-        --predict_type thresholding \
-        --output_dir out/nq-bart-closed-qa \
-        --predict_file data/nqopen-dev.json \
-        --predict_batch_size ${test_bs} \
-        --append_another_bos \
-        --device 0
-"""
+
 
 
 

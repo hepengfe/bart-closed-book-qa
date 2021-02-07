@@ -133,6 +133,40 @@ python cli.py \
         --device 0 \
         --gradient_cp False \
         --eval_period 1000 
+
+
+----------------------debug what slows down the process in topKPassages
+train_bs=150
+test_bs=150
+python cli.py \
+        --model bart \
+        --do_train --output_dir out/nq-bart-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 1024 \
+        --top_k 1 \
+        --eval_period 1000 
+
+
+------- tokenization without training
+python cli.py \
+        --model bart \
+        --do_tokenize --output_dir out/nq-bart-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 1024 \
+        --top_k 1 \
+        --eval_period 1000 
 """
 
 
@@ -161,6 +195,7 @@ def main():
     parser.add_argument("--output_dir", default=None, type=str, required=True)
     parser.add_argument("--do_train", action='store_true')
     parser.add_argument("--do_predict", action='store_true')
+    parser.add_argument("--do_tokenize", action='store_true')
     parser.add_argument("--predict_type", default="thresholding", type=str)
 
 
@@ -216,6 +251,16 @@ def main():
     parser.add_argument('--device', type=str, default="cuda", help="Can be set to cpu or cuda or device number")
     parser.add_argument('--n_gpu', type=int, default=0)
     parser.add_argument('--gradient_cp', type=bool, default=False)
+
+
+
+    # parameters for SpanSeqGen
+    parser.add_argument("--top_k", default=10, type=int)
+    parser.add_argument("--ranking_path", default="data/reranking_results/")
+    parser.add_argument("--passages_path", default="data/psgs_w100.tsv")
+    parser.add_argument("--data_path", default="data/")  # TODO: integerate it later
+    parser.add_argument("--eval_recall", default=False)
+
     args = parser.parse_args()
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         print("Output directory () already exists and is not empty.")
@@ -223,15 +268,10 @@ def main():
         os.makedirs(args.output_dir, exist_ok=True)
 
 
-    # parameters for SpanSeqGen
-    parser.add_argument("--top_k", default=100, type=int)
-    parser.add_argument("--ranking_path", default="data/reranking_results/nq_test.json")
-    parser.add_argument("--passages_path", default="data/psgs_w100.tsv")
-    parser.add_argument("--data_path", default="data/nqopen-test.json")  # TODO: integerate it later
-    parser.add_argument("--eval_recall", default=False)
 
 
 
+    
 
 
 
@@ -267,8 +307,8 @@ def main():
 
     # if args.n_gpu > 0:
     #     torch.cuda.manual_seed_all(args.seed)
-    if not args.do_train and not args.do_predict:
-        raise ValueError("At least one of `do_train` or `do_predict` must be True.")
+    if not args.do_train and not args.do_predict and not args.do_tokenize:
+        raise ValueError("At least one of `do_train` or `do_predict` or `do_tokenize` must be True.")
 
     if args.do_train:
         if not args.train_file:

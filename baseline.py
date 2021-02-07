@@ -4,7 +4,7 @@ import numpy as np
 import json
 import data
 from collections import defaultdict
-from data import *
+from data import normalize_answer
 from bart import MyBartModel
 
 

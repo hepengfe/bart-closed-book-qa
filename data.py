@@ -4,13 +4,22 @@ import re
 import string
 import numpy as np
 from tqdm import tqdm
-from baseline import topKPassasages
+
 import torch
 from torch.utils.data import Dataset, TensorDataset, DataLoader, RandomSampler, SequentialSampler
+import argparse
+
+import numpy as np
+import json
+import data
+import pickle
+from collections import defaultdict
+from bart import MyBartModel
+from tqdm import tqdm
 
 class QAData(object):
 
-    def __init__(self, logger, args, data_path, is_training):
+    def __init__(self, logger, args, data_path, dataset_type):
         self.data_path = data_path
         if args.debug:
             self.data_path = data_path.replace("train", "dev")
@@ -30,7 +39,10 @@ class QAData(object):
 
         self.index2id = {i:d["id"] for i, d in enumerate(self.data)}
         self.id2index = {d["id"]:i for i, d in enumerate(self.data)}
-        self.is_training = is_training
+        if dataset_type == "train":
+            self.is_training = True
+        else:
+            self.is_training = False
         self.load = not args.debug
         self.logger = logger
         self.args = args
@@ -49,13 +61,19 @@ class QAData(object):
         self.dataloader = None
         self.cache = None
         self.concatenateQA = False
+
+
+        # load passages dataset
         if args.predict_type == "SpanSeqGen":
             self.concatenateQA = True
-            k = args.top_k
+
+            self.k = args.top_k
             wiki_passage_path = args.passages_path
-            ranking_path = args.ranking_path
-            data_path = args.data_path
-            self.passages = topKPassasages(k, wiki_passage_path, ranking_path, data_path)
+            ranking_path = os.path.join(args.ranking_path, f"nq_{dataset_type}.json")
+            data_path = os.path.join(args.data_path, f"nqopen-{dataset_type}.json")
+            self.passages = topKPassasages(self.k, wiki_passage_path, ranking_path, data_path)
+
+                
 
     def __len__(self):
         return len(self.data)
@@ -76,16 +94,18 @@ class QAData(object):
 
     def load_dataset(self, tokenizer, do_return=False):
         self.tokenizer = tokenizer
-        tokenizer.add_tokens(["<SEP>"])
-        postfix = tokenizer.__class__.__name__.replace("zer", "zed")
+        tokenizer.add_tokens(["<SEP>"]) # add extra token for BART 
+        postfix = tokenizer.__class__.__name__.replace("zer", "zed")  # For example: BartTokenizer -> BartTokenized
+        postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(self.k)]) # TODO: can be written more elegantly by using dictionary
         preprocessed_path = os.path.join(
             "/".join(self.data_path.split("/")[:-1]),
             self.data_path.split("/")[-1].replace(".json", "-{}.json".format(postfix)))
-        if self.load and os.path.exists(preprocessed_path):
+        if self.load and os.path.exists(preprocessed_path): 
             self.logger.info("Loading pre-tokenized data from {}".format(preprocessed_path))
             with open(preprocessed_path, "r") as f:
                 input_ids, attention_mask, decoder_input_ids, decoder_attention_mask, \
-                    metadata = json.load(f)
+                    metadata, passage_coverage_rate = json.load(f)
+                print("Passage coverage rate: ", passage_coverage_rate * 100, " %")
         else:
             print ("Start tokenizing...")
             questions = [d["question"] if d["question"].endswith("?") else d["question"]+"?"
@@ -100,7 +120,8 @@ class QAData(object):
 
                 # TODO: add them to arguments
                 # note that after this questions are actually a concatenation of questions and passages
-                for i in range(len(questions)):
+                print("Start concatenating question and passages for top ", self.k , " passages")
+                for i in tqdm(range(len(questions))):
                     for p in self.passages.get_passages(i): # add passage one by one
                         questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
                     questions[i] += " </s>"
@@ -120,20 +141,27 @@ class QAData(object):
 
             question_input = tokenizer.batch_encode_plus(questions,
                                                          pad_to_max_length=True,
-                                                         max_length=self.args.max_input_length)
+                                                         max_length=self.args.max_input_length,
+                                                         return_overflowing_tokens=True)
+            
             answer_input = tokenizer.batch_encode_plus(answers,
                                                        pad_to_max_length=True)
 
             input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
             decoder_input_ids, decoder_attention_mask = answer_input["input_ids"], answer_input["attention_mask"]
+            
+            num_truncated_tokens = sum(question_input['num_truncated_tokens']) 
+            num_quesiton_ids = sum(  [ len(question) for question in  question_input['input_ids'] ] ) 
+            passage_coverage_rate =   num_quesiton_ids    / (num_truncated_tokens + num_quesiton_ids) 
+            print("Passage coverage rate: ", passage_coverage_rate * 100, " %")
             if self.load:
                 preprocessed_data = [input_ids, attention_mask,
                                      decoder_input_ids, decoder_attention_mask,
-                                     metadata]
+                                     metadata, passage_coverage_rate]
                 with open(preprocessed_path, "w") as f:
                     json.dump([input_ids, attention_mask,
                                decoder_input_ids, decoder_attention_mask,
-                               metadata], f)
+                               metadata, passage_coverage_rate], f)
         self.dataset = MyQADataset(input_ids, attention_mask,
                                          decoder_input_ids, decoder_attention_mask,
                                          in_metadata=None, out_metadata=metadata,
@@ -226,4 +254,82 @@ class MyDataLoader(DataLoader):
             batch_size = args.predict_batch_size
         super(MyDataLoader, self).__init__(dataset, sampler=sampler, batch_size=batch_size)
 
+
+
+class topKPassasages():
+    """
+    This class serves as modular way of retrieving top k passages of a question for reader
+    """
+    def __init__(self, k, passages_path, rank_path, data_path, evaluate=False):
+        # load wiki passages and store in dictionary
+
+        
+        self.ranks = self.load_ranks(rank_path) # a list of lists of passsages ids   [ [ 3,5,9 ], ...  ]
+        self.answers = self.load_answer(data_path) # {id:str, question:text, answer:text}
+        self.passages = self.load_passages(passages_path) # a list of dictionary {title:str, text:str}
+
+        if evaluate:
+            self.recall = self.evaluate_recall()
+
+
+        self.topKRank(k)
+
+    def get_passages(self, i):
+        """
+        0-indexed based retrieval to get top k passages.
+        Note that rank, answers and passages are lists with the same length
+        :param i: index
+        :return: a list of passage dictionary {title:str, text:str}
+        """
+        # get rank prediction
+        return [self.passages[passage_id] for passage_id in self.ranks[i]]
+
+
+    def topKRank(self, k=10):
+        self.ranks = [r[:k] for r in self.ranks]
+
+    def load_passages(self, passages_path):
+        """[load, format passages ]
+
+        Args:
+            passages_path ([type]): [description]
+
+        Returns:
+            [type]: [description]
+        """
+
+        wiki_data = []
+        with open(passages_path, "rb") as fp:
+            for line in fp.readlines():
+                wiki_data.append(line.decode().strip().split("\t"))
+        assert wiki_data[0]==["id", "text", "title"]
+        wiki_data = [ {"title": title, "text": text} for _, text, title in wiki_data[1:]]  # TODO: don't we record passage id? id is just its index (we change it to 0 based)
+        return wiki_data
+
+    def load_answer(self, data_path):
+        # load answer for the question
+        with open(data_path, "r") as fp:
+            answers = json.load(fp)
+        return answers
+
+
+    def load_ranks(self, rank_path):
+        # load
+        with open(rank_path, "r") as fp:
+            ranks = json.load(fp)  # 0-indexed ranks
+        return ranks
+
+
+    def evaluate_recall(self):
+        recall = defaultdict(list)
+        for d, passage_indices in zip(self.answers, self.ranks):
+            assert len(passage_indices)==100
+            answers = [normalize_answer(answer) for answer in d["answer"]]
+            passages = [normalize_answer(self.passages[passage_index]["text"]) for passage_index in passage_indices]
+            for k in [1, 5, 10, 100]:
+                recall[k].append(any([answer in passage for answer in answers for passage in passages[:k]]))
+
+        for k in [1, 5, 10, 100]:
+            print ("Recall @ %d\t%.1f%%" % (k, 100*np.mean(recall[k])))
+        return recall
 
