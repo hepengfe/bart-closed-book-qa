@@ -1,7 +1,7 @@
 from transformers import T5ForConditionalGeneration
 
 # from transformers.modeling_outputs import Seq2SeqLMOutput
-# from transformers.modeling_bart import shift_tokens_right
+from transformers.modeling_bart import shift_tokens_right
 from transformers.modeling_t5 import T5PreTrainedModel, T5Stack
 import torch
 import torch.nn.functional as F
@@ -21,6 +21,7 @@ class T5StackCP(T5Stack):
             use_cache=False,
     ):
 
+        
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
@@ -317,15 +318,17 @@ class MyT5(T5ForConditionalGeneration):
                 decoder_attention_mask=None,
                 decoder_past_key_value_states=None,
                 use_cache=False,
-                lm_labels=None,
-                inputs_embeds=None,
-                decoder_inputs_embeds=None,
-                head_mask=None,
                 is_training = False):
-        # if is_training:
-        #     _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
-        # else:
-        #     _decoder_input_ids = decoder_input_ids
+
+        # outputs = self.model(
+        #     input_ids,
+        #     attention_mask=attention_mask,
+        #     encoder_outputs=encoder_outputs,
+        #     decoder_input_ids=_decoder_input_ids,
+        #     decoder_attention_mask=decoder_attention_mask,
+        #     decoder_cached_states=decoder_cached_states,
+        #     use_cache=use_cache,
+        # )
         if self.gradient_cp:
 
             outputs = cp_forward(
@@ -338,40 +341,67 @@ class MyT5(T5ForConditionalGeneration):
                 use_cache=use_cache
             )
         else:
+            import pdb
+            pdb.set_trace()
+            # mimic code before BartModel forward
+            if is_training:
+                # lm_labels = decoder_input_ids.clone() 
+                decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
+            else:
+                decoder_input_ids = decoder_input_ids
+
+
+
+
+
+            # mimic code in BartModel forward
+            
+            # customize some variables for simplicity
+            inputs_embeds = None
+            head_mask = None
+            decoder_inputs_embeds = None
+
+            # another shifting in BartModel forward function
+            if decoder_input_ids is None and decoder_inputs_embeds is None:
+                decoder_input_ids = shift_tokens_right(
+                    input_ids, self.config.pad_token_id, self.config.decoder_start_token_id
+                )
+
+            # output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+            # output_hidden_states = (
+            #     output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+            # )
+            # use_cache = use_cache if use_cache is not None else self.config.use_cache
+            # return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+
+            # Encode   (Skipped return_dict condition )
             if encoder_outputs is None:
                 # Convert encoder inputs in embeddings if needed
                 encoder_outputs = self.encoder(
                     input_ids=input_ids, attention_mask=attention_mask, inputs_embeds=inputs_embeds, head_mask=head_mask
                 )
 
-            hidden_states = encoder_outputs[0]
-
-            if lm_labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
-                # get decoder inputs from shifting lm labels to the right
-                decoder_input_ids = self._shift_right(lm_labels)
-
-
-
-            # If decoding with past key value states, only the last tokens
-            # should be given as an input
-            if decoder_past_key_value_states is not None:
-                assert lm_labels is None, "Decoder should not use cached key value states when training."
-                if decoder_input_ids is not None:
-                    decoder_input_ids = decoder_input_ids[:, -1:]
-                if decoder_inputs_embeds is not None:
-                    decoder_inputs_embeds = decoder_inputs_embeds[:, -1:]
+            encoder_hidden_states = encoder_outputs[0]
 
             # Decode
             decoder_outputs = self.decoder(
                 input_ids=decoder_input_ids,
                 attention_mask=decoder_attention_mask,
                 inputs_embeds=decoder_inputs_embeds,
-                past_key_value_states=decoder_past_key_value_states,
-                encoder_hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
                 encoder_attention_mask=attention_mask,
                 head_mask=head_mask,
                 use_cache=use_cache,
             )
+
+
+
+
+
+
+            # Following is decoding
+
 
             # insert decoder past at right place
             # to speed up decoding
@@ -388,8 +418,9 @@ class MyT5(T5ForConditionalGeneration):
             lm_logits = self.lm_head(sequence_output)
 
             decoder_outputs = (lm_logits,) + decoder_outputs[1:]  # Add hidden states and attention if they are here
-            if lm_labels is not None:  #TODO: check if it is correct
-            # if is_training:
+
+            # if lm_labels is not None:  #TODO: check if it is correct
+            if is_training:
                 loss_fct = CrossEntropyLoss(reduction="sum",ignore_index=-100)
                 loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), decoder_input_ids.view(-1))
                 # decoder_outputs = (loss,) + decoder_outputs

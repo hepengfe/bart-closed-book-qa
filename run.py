@@ -28,17 +28,20 @@ def run(args, logger):
     if args.do_tokenize:
         # during the process train_data will be overwritten, so memory will be collected
         for k in range(5, 15):
-            args.top_k = k
-            train_data = QAData(logger, args, args.train_file, "train")
-            dev_data = QAData(logger, args, args.predict_file, "dev")
+            for l in range(600, 800, 50):
+                print("Evaluate passage coverage for top ", k, "passages for max input sequence length ", l)
+                args.top_k = k
+                args.max_input_length = l
+                train_data = QAData(logger, args, args.train_file, "train")
+                dev_data = QAData(logger, args, args.predict_file, "dev")
 
-            print("Pre-process training data")
-            train_data.load_dataset(tokenizer)
-            train_data.load_dataloader()
+                print("Pre-process training data")
+                train_data.load_dataset(tokenizer)
+                train_data.load_dataloader()
 
-            print("Pre-process development data") 
-            dev_data.load_dataset(tokenizer)
-            dev_data.load_dataloader()
+                print("Pre-process development data") 
+                dev_data.load_dataset(tokenizer)
+                dev_data.load_dataloader()
         print("finished tokenization")
         exit()
     else:

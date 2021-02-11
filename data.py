@@ -72,7 +72,17 @@ class QAData(object):
             ranking_path = os.path.join(args.ranking_path, f"nq_{dataset_type}.json")
             data_path = os.path.join(args.data_path, f"nqopen-{dataset_type}.json")
             self.passages = topKPassasages(self.k, wiki_passage_path, ranking_path, data_path)
+        elif args.predict_type == "SpanExtraction":
+            self.concatenateQA = True
 
+            self.k = args.top_k
+            wiki_passage_path = args.passages_path
+            ranking_path = os.path.join(args.ranking_path, f"nq_{dataset_type}.json")
+            data_path = os.path.join(args.data_path, f"nqopen-{dataset_type}.json")
+            self.passages = topKPassasages(self.k, wiki_passage_path, ranking_path, data_path) 
+        else:
+            print("Wrong predict_type!")
+            exit()
                 
 
     def __len__(self):
@@ -96,10 +106,15 @@ class QAData(object):
         self.tokenizer = tokenizer
         tokenizer.add_tokens(["<SEP>"]) # add extra token for BART 
         postfix = tokenizer.__class__.__name__.replace("zer", "zed")  # For example: BartTokenizer -> BartTokenized
+        prepend_question_token = False
+        if postfix[:2].lower() == "t5": # TODO: find a smarter way to check if it's dataset for T5
+           prepend_question_token = True
         postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(self.k)]) # TODO: can be written more elegantly by using dictionary
         preprocessed_path = os.path.join(
             "/".join(self.data_path.split("/")[:-1]),
             self.data_path.split("/")[-1].replace(".json", "-{}.json".format(postfix)))
+        
+
         if self.load and os.path.exists(preprocessed_path): 
             self.logger.info("Loading pre-tokenized data from {}".format(preprocessed_path))
             with open(preprocessed_path, "r") as f:
@@ -116,16 +131,21 @@ class QAData(object):
                 questions = [question.lower() for question in questions]
                 answers = [answer.lower() for answer in answers]
             if self.concatenateQA:
+                if prepend_question_token:
+                       questions = ["question: " + question for question in questions] 
                 questions = ["<s> " + q for q in questions]
-
                 # TODO: add them to arguments
                 # note that after this questions are actually a concatenation of questions and passages
                 print("Start concatenating question and passages for top ", self.k , " passages")
+                
                 for i in tqdm(range(len(questions))):
+                    
                     for p in self.passages.get_passages(i): # add passage one by one
                         questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
                     questions[i] += " </s>"
             else:
+                print("Not implmented yet for self.concatenateQA==False")
+                exit()
                 append_qa_token = True
                 if append_qa_token:
                     # questions = ["question: "+question for question in questions]
