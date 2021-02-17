@@ -1,4 +1,5 @@
 import os
+from span_predictor import SpanPredictor
 import numpy as np
 import torch
 import json
@@ -19,6 +20,7 @@ from T5 import MyT5
 def run(args, logger):
     if args.model.lower() == "bart":
         tokenizer = BartTokenizer.from_pretrained("bart-large")
+        # tokenizer = BartTokenizer.from_pretrained("bart-large")
     elif args.model.lower() == "t5":
         # tokenizer = T5Tokenizer.from_pretrained("t5-large")
         tokenizer = T5Tokenizer.from_pretrained("t5-base")
@@ -81,31 +83,37 @@ def run(args, logger):
                 exit()
 
         else:
-            if args.model.lower() == "bart":
-                # default_config = BartConfig.from_pretrained("bart-large")
-                # config = BartConfig.from_pretrained("bart-large", vocab_size = default_config.vocab_size + 1 ) 
+
+            # spanseqgen
+            if args.predict_type.lower() == "spanseqgen":
+                if args.model.lower() == "bart":
+                    # default_config = BartConfig.from_pretrained("bart-large")
+                    # config = BartConfig.from_pretrained("bart-large", vocab_size = default_config.vocab_size + 1 ) 
 
 
-                config = BartConfig.from_pretrained("bart-large")
-                model = MyBart.from_pretrained("bart-large", config=config)
+                    config = BartConfig.from_pretrained("bart-large")
+                    model = MyBart.from_pretrained("bart-large", config=config)
+
+                    # The new vector is added at the end of the embedding matrix
+                    # set it to Randomly generated matrix
+                    model.resize_token_embeddings(len(tokenizer)) # as there is new token <SEP>
+
+                    # model.model.shared.weight[-1, :] = torch.zeros([model.config.hidden_size])
 
 
-                model.resize_token_embeddings(len(tokenizer)) 
-                # The new vector is added at the end of the embedding matrix
-                # set it to Randomly generated matrix
-
-                # model.model.shared.weight[-1, :] = torch.zeros([model.config.hidden_size])
 
 
+                    # model = MyBartForCondGen.from_pretrained("bart-large")
+                elif args.model.lower() == "t5":
+                    # model = MyT5.from_pretrained('t5-large')
+                    model = MyT5.from_pretrained('t5-base')
 
-
-                # model = MyBartForCondGen.from_pretrained("bart-large")
-            elif args.model.lower() == "t5":
-                # model = MyT5.from_pretrained('t5-large')
-                model = MyT5.from_pretrained('t5-base')
-            else:
-                print("wrong model argument")
-                exit()
+                else:
+                    print("wrong model argument")
+                    exit()
+            elif args.predict_type.lower() == "spanextraction":
+                logger.info("Bert model enabled for span predictions") 
+                model = SpanPredictor().from_pretrained("bert")
             if args.device == "cuda" and torch.cuda.device_count() > 1:
                 if args.n_gpu == 1:
                     logger.warning("User specified one gpu but there are actually {}, it has been corrected".format(torch.cuda.device_count()))

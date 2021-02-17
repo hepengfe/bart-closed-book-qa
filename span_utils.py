@@ -1,5 +1,5 @@
 
-
+from tqdm import tqdm
 def preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages,
                is_training, max_input_length, max_n_answers):
     '''
@@ -12,8 +12,11 @@ def preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages
     assert len(questions)==len(all_titles)==len(all_passages)==len(metadata)
 
     inputs = []
+    # import pdb
+    # pdb.set_trace()
 
-    for question, titles, passages in zip(questions, all_titles, all_passages):
+    print("Start concatenate question and passages")
+    for question, titles, passages in tqdm(zip(questions, all_titles, all_passages)):
 
         concatenated_context = ""
         for title, passage in zip(titles, passages):
@@ -22,60 +25,76 @@ def preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages
             concatenated_context += title + " [SEP] " + passage
         inputs.append((question, concatenated_context))
 
+    # encoding is time consuming part, this version of transformer doesn't have BartTokenizerFast
     input_data = tokenizer.batch_encode_plus(inputs, padding="max_length", max_length=max_input_length,
-                                             return_offsets_mapping=True, truncation=True)
+                                             truncation=True, return_attention_mask = True, return_token_type_ids = True)
+
     answer_data = tokenizer.batch_encode_plus(answers)
 
     input_ids = input_data["input_ids"]
     attention_mask = input_data["attention_mask"]
     token_type_ids = input_data["token_type_ids"]
-    offset_mapping = input_data["offset_mapping"]
 
     start_positions = []
     end_positions = []
     answer_mask = []
-    for curr_input_ids, curr_attention_mask, curr_token_type_ids, curr_offset_mapping, curr_metadata in zip(
-                input_ids, attention_mask, token_type_ids, curr_offset_mapping, metadata):
+    # import pdb
+    # pdb.set_trace()
+    for curr_input_ids, curr_attention_mask, curr_token_type_ids, curr_metadata in zip(
+                input_ids, attention_mask, token_type_ids, metadata):
 
-        offset = 1 + curr_offset_mapping[1:].index((0, 0)) # start of the passages
-        answer_input_ids = [answer_data[i][1:-1] for i in range(curr_metadata[0], curr_metadata[1])]
+        # offset record sep token location in original text
+        offset = 1 + curr_input_ids.index(tokenizer.sep_token_id)
+        # start: curr_metadata[0]
+        # end:  curr_metadata[1]
+        # answer_data is batch encoding
+        # answer_data._encoding is None
+        answer_input_ids = [answer_data["input_ids"][i][1:-1] for i in range(curr_metadata[0], curr_metadata[1])]
 
         # now, detect answer spans from passages
         detected_spans = []
         for curr_answer_input_ids in answer_input_ids:
             for i in range(offset, len(curr_input_ids)-len(curr_answer_input_ids)+1):
                 if curr_input_ids[i:i+len(curr_answer_input_ids)]==curr_answer_input_ids:
-                    detected_spans.append(i, i+len(curr_input_ids)-1)
+                    detected_spans.append( (i, i+len(curr_input_ids)-1))
                     if len(detected_spans)==max_n_answers:
                         break
 
         if is_training and len(detected_spans)==0:
             continue
-
+        # start_positions =  [s[0], s[0], 0, 0]
         start_positions.append([s[0] for s in detected_spans] + [0 for _ in range(max_n_answers-len(detected_spans))])
         end_positions.append([s[1] for s in detected_spans] + [0 for _ in range(max_n_answers-len(detected_spans))])
         answer_mask.append([1 for _ in detected_spans] + [0 for _ in range(max_n_answers-len(detected_spans))])
 
 
-    # offset_mapping and raw_inputs are needed for span decoding. Others are needed to be fed into
-    # the model
     return {"input_ids": input_ids, "attention_mask": attention_mask, "token_type_ids": token_type_ids,
-            "start_positions": start_positions, "end_positions": end_positions, "answer_mask": answer_mask,
-            "offset_mapping": offset_mapping, "raw_inputs": inputs}
+            "start_positions": start_positions, "end_positions": end_positions, "answer_mask": answer_mask}
 
+def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_answer_length):
+    """[summary]
+    Decode start and end logits (span prediction) into a list of text and its score
+    Args:
+        start_logits (tensor): [description]
+        end_logits ([type]): [description]
+        input_ids ([type]): [description]
+        tokenizer ([type]): [description]
+        top_k_answers ([type]): [description]
+        max_answer_length ([type]): [description]
 
-def decode(start_logits, end_logits, offset_mapping, raw_inputs,
-           top_k_answers, max_answer_length):
-
-    assert len(start_logits)==len(end_logits)==len(offset_mapping)==len(raw_inputs)
+    Returns:
+        [type]: [description]
+    """
+    assert len(start_logits)==len(end_logits)==len(input_ids)
 
     all_predictions = []
 
-    for curr_start_logits, curr_end_logits, curr_offset_mapping, curr_raw_inputs in \
-            zip(start_logits, end_logits, offset_mapping, raw_inputs):
 
-        assert len(curr_start_logits)==len(curr_end_logits)==len(curr_offset_mapping)
-        offset = 1 + curr_offset_mapping[1:].index((0, 0))
+    for curr_start_logits, curr_end_logits, curr_input_ids in \
+            zip(start_logits, end_logits, input_ids):
+
+        assert len(curr_start_logits)==len(curr_end_logits)==len(curr_input_ids)
+        offset = 1 + curr_input_ids.index(tokenizer.sep_token_id)
 
         curr_start_logits = curr_start_logits[offset:]
         curr_end_logits = curr_end_logits[offset:]
@@ -86,20 +105,27 @@ def decode(start_logits, end_logits, offset_mapping, raw_inputs,
 
         scores = sorted(scores, key=lambda x: x[1], reverse=True)
         chosen_span_intervals = []
-        nbext = []
+        nbest = []
+        # postprocess spans and scores
         for (start_index, end_index), score in scores:
             if end_index < start_index:
                 continue
             length = end_index - start_index + 1
             if length > max_answer_length:
                 continue
+
+            # skip on any overlapping indices
+            # (start_index, (prev_start_index, prev_end_index), end_index)
+            # (prev_start_index, (start_index, end_index), prev_end_index) 
             if any([start_index<=prev_start_index<=prev_end_index<=end_index or
                     prev_start_index<=start_index<=end_index<=prev_end_index
                     for (prev_start_index, prev_end_index) in chosen_span_intervals]):
                 continue
 
-            char_start, char_end = curr_offset_mapping[s+offset][0], curr_offset_mapping[e+1+offset][1]
-            answer_text = curr_raw_inputs[char_start:char_end]
+            answer_text = tokenizer.decode(
+                input_ids[offset+start_index:offset+end_index+1],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True).strip()
 
             nbest.append({
                 'text': answer_text,

@@ -167,6 +167,66 @@ python cli.py \
         --max_input_length 1024 \
         --top_k 1 \
         --eval_period 1000 
+
+
+----------- train bart
+python cli.py \
+        --model bart \
+        --do_train --output_dir out/nq-bart-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 750 \
+        --top_k 5 \
+        --eval_period 1000 
+
+----------- train T5
+python cli.py \
+        --model t5 \
+        --do_train --output_dir out/nq-t5-closed-qa \
+        --train_file data/nqopen-train.json \
+        --predict_file data/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 750 \
+        --top_k 5 \
+        --eval_period 1000 
+
+-------- bart with dataset aimbig 
+python cli.py \
+        --model bart \
+        --do_train --output_dir out/ambig-bart-closed-qa \
+        --train_file data/ambigqa/ambigqa_train.json \
+        --predict_file data/ambigqa/ambigqa_dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 750 \
+        --top_k 5 \
+        --eval_period 1
+-------- bart with dataset aimbig and span extraction 
+python cli.py \
+        --model bart \
+        --do_train --output_dir out/ambig-bart-closed-qa \
+        --train_file data/ambigqa/train_light.json \
+        --predict_file data/ambigqa/dev_light.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 750 \
+        --top_k 5 \
+        --eval_period 1000
 """
 
 
@@ -256,9 +316,10 @@ def main():
 
     # parameters for SpanSeqGen
     parser.add_argument("--top_k", default=10, type=int)
-    parser.add_argument("--ranking_path", default="data/reranking_results/")
-    parser.add_argument("--passages_path", default="data/psgs_w100.tsv")
-    parser.add_argument("--data_path", default="data/")  # TODO: integerate it later
+    parser.add_argument("--ranking_folder_path", default="data/reranking_results/ambigqa")
+    parser.add_argument("--data_folder_path", default="data/ambigqa")  # TODO: integerate it later
+    parser.add_argument("--passages_path", default="data/wiki/psgs_w100_20200201.tsv") # psgs_w100.tsv
+
     parser.add_argument("--eval_recall", default=False)
 
     args = parser.parse_args()
