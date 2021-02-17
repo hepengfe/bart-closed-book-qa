@@ -563,9 +563,9 @@ class topKPassasages():
             # collecting answers based on the annotation type
             for qa_d in d["annotations"]:
                 if qa_d["type"] == "singleAnswer":
-                    answers.append(qa_d["answer"])
+                    answers.append([qa_d["answer"]])
                 elif qa_d["type"] == "multipleQAs":
-                    [answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+                    answers.append([pair["answer"] for pair in qa_d["qaPairs"]])
                 else:
                     print("error in qa_d type")
             passages = [normalize_answer(self.passages[passage_index]["text"]) for passage_index in passage_indices] 
@@ -579,8 +579,9 @@ class topKPassasages():
                 print(passages_str)
                 # print("answers: ", answers)
                 for answer in answers:
+                    # each answer should be a list of list of strings
                     # print("answer: ", answer)
-                    token_presence = [int(normalize_answer(answer_token) in passages_str) for answer_token in answer ]
+                    token_presence = [int(any([normalize_answer(_answer_token) in passages_str for _answer_token in answer_token])) for answer_token in answer ]
                     cur_recall = sum(token_presence)/len(token_presence)
                     answers_recall.append(cur_recall)
                 # print(type(k))
