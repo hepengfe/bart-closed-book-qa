@@ -84,32 +84,37 @@ class QAData(object):
         # load passages dataset
         # TODO: add tokenized path
         # TODO: add data naming and folder architecture into readme
+
+        # idea of naming detection is finding the folder name
+        if any([n in args.ranking_folder_path for n in ["nq", "nqopen"]]):
+            ranking_file_name = "nq_"
+            data_file_n = "nqopen-"
+        elif any([n in args.ranking_folder_path for n in ["ambigqa"]]):
+            ranking_file_name = "ambigqa_"
+            data_file_n = "ambigqa_"  # NOTE: it's for light data only
+        else:
+            print("args.ranking_folder_path: ", args.ranking_folder_path)
+            exit()
+        # import pdb
+        # pdb.set_trace()
         if args.predict_type == "SpanSeqGen":
             self.concatenateQA = True
 
             self.k = args.top_k
             wiki_passage_path = args.passages_path
 
-            # idea of naming detection is finding the folder name 
-            if any([ n in args.ranking_folder_path for n in ["nq", "nqopen"]]):
-                ranking_file_n = "nq_"
-                data_file_n = "nqopen-"
-            elif  any([n in args.ranking_folder_path for n in ["ambigqa"]]):
-                ranking_file_n = "ambigqa_"
-                data_file_n = "ambigqa_" # NOTE: it's for light data only 
-            else: 
-                pass
-            ranking_path = os.path.join(args.ranking_folder_path, f"{ranking_file_n}{dataset_type}.json")
+
+
+            ranking_path = os.path.join(args.ranking_folder_path, f"{ranking_file_name}{dataset_type}.json")
             data_path = os.path.join(args.data_folder_path, f"{data_file_n}{dataset_type}.json")
             self.passages = topKPassasages(self.k, wiki_passage_path, ranking_path, data_path)
         elif args.predict_type == "SpanExtraction":
             self.concatenateQA = True
-
             self.k = args.top_k
             wiki_passage_path = args.passages_path
-            ranking_path = os.path.join(args.ranking_folder_path, f"{ranking_file_n}{dataset_type}.json")
+            ranking_path = os.path.join(args.ranking_folder_path, f"{ranking_file_name}{dataset_type}.json")
             data_path = os.path.join(args.data_folder_path, f"{data_file_n}{dataset_type}.json")
-            self.passages = topKPassasages(self.k, wiki_passage_path, ranking_path, args.data_path) 
+            self.passages = topKPassasages(self.k, wiki_passage_path, ranking_path, data_path) 
         else:
             print("Wrong predict_type!")
             exit()
@@ -134,7 +139,10 @@ class QAData(object):
     def load_dataset(self, tokenizer, do_return=False):
         answer_type = "span"  # TODO: add it to argument
         self.tokenizer = tokenizer
-        tokenizer.add_tokens(["<SEP>"]) # add extra token for BART 
+
+        # NOTE:  Might have bug here 
+        if self.args.model == "bart":
+            self.tokenizer.add_tokens(["<SEP>"]) # add extra token for BART 
         postfix = tokenizer.__class__.__name__.replace("zer", "zed")  # For example: BartTokenizer -> BartTokenized
         prepend_question_token = False
         if postfix[:2].lower() == "t5": # TODO: find a smarter way to check if it's dataset for T5
@@ -143,7 +151,7 @@ class QAData(object):
         if self.debug:
             postfix += "_debug"
         preprocessed_path = os.path.join(
-            "/".join(self.data_path.split("/")[:-1]),
+            "/".join(self.data_path.split("/")[:-2]), "tokenized",
             self.data_path.split("/")[-1].replace(".json", "-{}.json".format(postfix)))
         
 
@@ -153,13 +161,15 @@ class QAData(object):
                 if answer_type == "gen": 
                     input_ids, attention_mask, decoder_input_ids, decoder_attention_mask, \
                         metadata, passage_coverage_rate = json.load(f)
-                    print("Passage coverage rate: ", passage_coverage_rate * 100, " %")
+                    
                 elif answer_type == "span":
-                    input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask = json.load(
+                    input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask, passage_coverage_rate = json.load(
                         f)
                 else:
                     print("Unrecognizable answer type")
                     exit()   
+                print("Passage coverage rate: ",
+                      passage_coverage_rate * 100, " %")
         else:
             print ("Start tokenizing...")
             questions = [d["question"] if d["question"].endswith("?") else d["question"]+"?"
@@ -234,7 +244,7 @@ class QAData(object):
                 answer_mask = d["answer_mask"]
                 # Q: input  (QA concatenation, y= answer?)
                 # label is the start and end positions
-
+                answer_coverage_rate = d["answer_coverage_rate"]
 
 
 
@@ -266,23 +276,29 @@ class QAData(object):
                                 decoder_input_ids, decoder_attention_mask,
                                 metadata, passage_coverage_rate], fp)
                     elif answer_type == "span":
-                         json.dump([input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask], fp) 
-            if answer_type == "gen":
-                self.dataset = QAGenDataset(input_ids, attention_mask,
-                                            decoder_input_ids, decoder_attention_mask,
-                                            in_metadata=None, out_metadata=metadata,
-                                            is_training=self.is_training)
-            elif answer_type == "span":
-                # import pdb
-                # pdb.set_trace()
+                        json.dump([input_ids, attention_mask, token_type_ids, start_positions,
+                                   end_positions, answer_mask, answer_coverage_rate], fp)
+        
+        # loading dataset
+        if answer_type == "gen":
+            self.dataset = QAGenDataset(input_ids, attention_mask,
+                                        decoder_input_ids, decoder_attention_mask,
+                                        in_metadata=None, out_metadata=metadata,
+                                        is_training=self.is_training)
+        elif answer_type == "span":
+            # import pdb
+            # pdb.set_trace()
 
-                # self.dataset = QASpanDataset(*d.values())
-                # self.dataset = Dataset(input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
-                list_of_tensors = self.tensorize(
-                    input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
-                import pdb
-                pdb.set_trace()
-                self.dataset = TensorDataset(*list_of_tensors)
+            # self.dataset = QASpanDataset(*d.values())
+            # self.dataset = Dataset(input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
+            
+            # batch size x max_n_answer 
+            list_of_tensors = self.tensorize(
+                input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
+            self.dataset = TensorDataset(*list_of_tensors)
+        else:
+            print("wrong answer_type argument")
+            exit()
         self.logger.info("Loaded {} examples from {} data".format(len(self.dataset), self.data_type))
 
         if do_return:
@@ -317,10 +333,30 @@ class QAData(object):
 
 
     def evaluate(self, predictions):
+        """Evaluate exact matches
+
+        Args:
+            predictions ([type]): [description]
+
+        Returns:
+            [type]: [description]
+        """
+        if type(predictions[0])== list:
+            answer_type = "span" # each answer is a list of all acceptable answers.   [str, str]
+        else:
+            answer_type = "seq"  # each answer is concatenation of all accpetable answers.   str
+        
         assert len(predictions)==len(self), (len(predictions), len(self))
+        import pdb
+        pdb.set_trace()
         ems = []
-        for (prediction, dp) in zip(predictions, self.data):
-            ems.append(get_exact_match(prediction, dp["answer"]))
+        if answer_type == "seq":
+            for (prediction, dp) in zip(predictions, self.data):
+                ems.append(get_exact_match(prediction, dp["answer"]))
+        else:
+            for (prediction, dp) in zip(predictions, self.data):
+                for pred in prediction:
+                    ems.append(get_exact_match(pred, dp["answer"]))
         return ems
 
     def save_predictions(self, predictions):
@@ -352,83 +388,83 @@ def normalize_answer(s):
 
 
 
-class QASpanDataset(Dataset):
-    # Q: do I need this class of dataset? 
-    # Q: if so, do I need negative dataset? I don't think so as it's was used to train dpr retriever
-    def __init__(self, input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask) -> None:
-        """[summary]
-        Tensorize list input
+# class QASpanDataset(Dataset):
+#     # Q: do I need this class of dataset? 
+#     # Q: if so, do I need negative dataset? I don't think so as it's was used to train dpr retriever
+#     def __init__(self, input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask) -> None:
+#         """[summary]
+#         Tensorize list input
 
-        Args:
-            input_ids ([type]): [description]
-            attention_mask ([type]): [description]
-            token_type_ids ([type]): [description]
-            start_positions ([type]): [description]
-            end_positions ([type]): [description]
-            answer_mask ([type]): [description]
-            offset_mapping ([type]): [description]
-            raw_inputs ([type]): [description]
-        """
+#         Args:
+#             input_ids ([type]): [description]
+#             attention_mask ([type]): [description]
+#             token_type_ids ([type]): [description]
+#             start_positions ([type]): [description]
+#             end_positions ([type]): [description]
+#             answer_mask ([type]): [description]
+#             offset_mapping ([type]): [description]
+#             raw_inputs ([type]): [description]
+#         """
 
-        import pdb
-        pdb.set_trace()
+#         import pdb
+#         pdb.set_trace()
 
-        # M is number of passage per question
-        # input ids = number of question x number of passages
-        self.input_ids = self.tensorize(input_ids)   # 40 x non-uniform list
-        self.attention_mask = self.tensorize(attention_mask) 
-        self.token_type_ids = self.tensorize(token_type_ids) 
-        self.start_positions = self.tensorize(start_positions) 
-        self.end_positions = self.tensorize(end_positions) 
-        self.answer_mask = self.tensorize(answer_mask) 
+#         # M is number of passage per question
+#         # input ids = number of question x number of passages
+#         self.input_ids = self.tensorize(input_ids)   # 40 x non-uniform list
+#         self.attention_mask = self.tensorize(attention_mask) 
+#         self.token_type_ids = self.tensorize(token_type_ids) 
+#         self.start_positions = self.tensorize(start_positions) 
+#         self.end_positions = self.tensorize(end_positions) 
+#         self.answer_mask = self.tensorize(answer_mask) 
        
-    def tensorize(self, data):
-        return [torch.LongTensor(d) for d in data] 
+#     def tensorize(self, data):
+#         return [torch.LongTensor(d) for d in data] 
 
-    def _pad(self, input_ids, M):
-        # input_ids is a tensor of one input
-        # if no input ids, then return zeros tensor
-        if len(input_ids)==0:
-            return torch.zeros((M, self.negative_input_ids[0].size(1)), dtype=torch.long)
-        # stack input ids
-        if type(input_ids)==list:
-            input_ids = torch.stack(input_ids)
-        # 
-        if len(input_ids)==M:
-            return input_ids
-        return torch.cat([input_ids,
-                            torch.zeros((M-input_ids.size(0), input_ids.size(1)), dtype=torch.long)],
-                            dim=0)
+#     def _pad(self, input_ids, M):
+#         # input_ids is a tensor of one input
+#         # if no input ids, then return zeros tensor
+#         if len(input_ids)==0:
+#             return torch.zeros((M, self.negative_input_ids[0].size(1)), dtype=torch.long)
+#         # stack input ids
+#         if type(input_ids)==list:
+#             input_ids = torch.stack(input_ids)
+#         # 
+#         if len(input_ids)==M:
+#             return input_ids
+#         return torch.cat([input_ids,
+#                             torch.zeros((M-input_ids.size(0), input_ids.size(1)), dtype=torch.long)],
+#                             dim=0)
 
-    def __len__(self):
-        return len(self.in_metadata)
+#     def __len__(self):
+#         return len(self.in_metadata)
     
-    def __getitem__(self, idx):
-        """There are two types of data
-        Input data: question, attention_mask
-        Output data:  answer
+#     def __getitem__(self, idx):
+#         """There are two types of data
+#         Input data: question, attention_mask
+#         Output data:  answer
 
-        Args:
-            idx ([type]): [description]
+#         Args:
+#             idx ([type]): [description]
 
-        Returns:
-            [type]: [description]
-        """
-        # in eval mode, return data by order
-        if not self.is_training:
-            idx = self.in_metadata[idx][0]
-            input_ids = self.positive_input_ids[idx][:self.test_M]
-            attention_mask = self.positive_input_mask[idx][:self.test_M]
-            token_type_ids = self.positive_token_type_ids[idx][:self.test_M] # it shows what are valid tokens
-            # return self.input_ids[idx], self.attention_mask[idx]
-            return [self._pad(t, self.test_M) for t in [input_ids, attention_mask, token_type_ids]]
-        # randomly return data in training mode
-        # NOTE: check in_metadata and out_metadata
-        in_idx = np.random.choice(range(*self.in_metadata[idx]))
-        out_idx = np.random.choice(range(*self.out_metadata[idx]))  # where the answer is 
+#         Returns:
+#             [type]: [description]
+#         """
+#         # in eval mode, return data by order
+#         if not self.is_training:
+#             idx = self.in_metadata[idx][0]
+#             input_ids = self.positive_input_ids[idx][:self.test_M]
+#             attention_mask = self.positive_input_mask[idx][:self.test_M]
+#             token_type_ids = self.positive_token_type_ids[idx][:self.test_M] # it shows what are valid tokens
+#             # return self.input_ids[idx], self.attention_mask[idx]
+#             return [self._pad(t, self.test_M) for t in [input_ids, attention_mask, token_type_ids]]
+#         # randomly return data in training mode
+#         # NOTE: check in_metadata and out_metadata
+#         in_idx = np.random.choice(range(*self.in_metadata[idx]))
+#         out_idx = np.random.choice(range(*self.out_metadata[idx]))  # where the answer is 
 
-        return self.input_ids[in_idx], self.attention_mask[in_idx], self.token_type_ids[in_idx], \
-            self.start_positions[out_idx], self.end_positions[out_idx], self.answer_mask[out_idx]
+#         return self.input_ids[in_idx], self.attention_mask[in_idx], self.token_type_ids[in_idx], \
+#             self.start_positions[out_idx], self.end_positions[out_idx], self.answer_mask[out_idx]
 
 class QAGenDataset(Dataset):
     def __init__(self,
@@ -490,12 +526,9 @@ class topKPassasages():
         self.passages = self.load_passages(passages_path) # a list of dictionary {title:str, text:str}
         
 
-        # check answers 
-        import pdb
-        pdb.set_trace()
         if evaluate:
-            self.recall = self.evaluate_recall()
-        self.evaluate_macro_avg_recall()
+            # self.recall = self.evaluate_recall()
+            self.evaluate_macro_avg_recall()
         self.topKRank(k)
 
     def get_passages(self, i):
@@ -506,7 +539,11 @@ class topKPassasages():
         :return: a list of passage dictionary {title:str, text:str}
         """
         # get rank prediction
-        return [self.passages[passage_id] for passage_id in self.ranks[i]]
+        try: 
+            return [self.passages[passage_id] for passage_id in self.ranks[i]]
+        except IndexError:
+            import pdb
+            pdb.set_trace()
 
 
     def topKRank(self, k=10):
@@ -546,16 +583,8 @@ class topKPassasages():
 
     def evaluate_macro_avg_recall(self):
         """evalute annotation recall
-
         """
-        import pdb
-        pdb.set_trace()
-
         top_k_passages_recall = defaultdict(list)# keep track of top k passages maximum recall 
-
-
-        # compute maximum recall for each passages
-        
         
         for d, passage_indices in zip(self.answers, self.ranks):
             assert len(passage_indices)==100
@@ -563,27 +592,23 @@ class topKPassasages():
             # collecting answers based on the annotation type
             for qa_d in d["annotations"]:
                 if qa_d["type"] == "singleAnswer":
-                    answers.append(qa_d["answer"])
+                    # answers.append(qa_d["answer"])
+                    answers.append([qa_d["answer"]])
                 elif qa_d["type"] == "multipleQAs":
-                    [answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+                    # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+                    answers.append([pair["answer"] for pair in qa_d["qaPairs"]])
                 else:
                     print("error in qa_d type")
             passages = [normalize_answer(self.passages[passage_index]["text"]) for passage_index in passage_indices] 
-            print(passages[0]) 
-            # convert the list of answers to a list of recall scores
-            # take the maximum
             for k in [1,5,10,100]:
                 answers_recall = []
                 passages_str = " ".join(passages[:k])
-                
-                print(passages_str)
-                # print("answers: ", answers)
+                # answer = [ [sometime one answer string], [sometimes a list of acceptable strings]  ]
+                # For example, [["Canada"], ["USA", "United States", "United States of America"]]
                 for answer in answers:
-                    # print("answer: ", answer)
-                    token_presence = [int(normalize_answer(answer_token) in passages_str) for answer_token in answer ]
+                    token_presence = [int(any([normalize_answer(_answer_token) in passages_str for _answer_token in answer_token])) for answer_token in answer ] 
                     cur_recall = sum(token_presence)/len(token_presence)
                     answers_recall.append(cur_recall)
-                # print(type(k))
                 # print("answers_recall", answers_recall)
                 # print("max answers recall", max(answers_recall))
                 top_k_passages_recall[k].append(max(answers_recall))
@@ -591,18 +616,6 @@ class topKPassasages():
         for k in [1,5,10,100]:
             print ("Recall @ %d\t%.1f%%" % (k, 100*np.mean(top_k_passages_recall[k]))) 
         return top_k_passages_recall
-
-
-
-
-        for k in [1,5,10,100]:
-            print("Recall @ %d\t%.1f%%" % (k, 100*np.mean(recall[k])))
-
-           # (Multiple QA) qaPairs -> iterate qa pair -> answer
-            # (single answer) iterate a list with length one -> answer
-
-        # average out the recall 
-        pass 
 
     def evaluate_recall(self):
         recall = defaultdict(list)

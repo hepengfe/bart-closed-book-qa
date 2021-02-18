@@ -1,10 +1,11 @@
+from span_utils import decode
 import os
 from span_predictor import SpanPredictor
 import numpy as np
 import torch
 import json
 
-from transformers import BartTokenizer, BartConfig, T5Tokenizer, T5Config
+from transformers import BartTokenizer, BartConfig, T5Tokenizer, T5Config, BertConfig, BertTokenizer
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 from data import QAData
@@ -18,15 +19,27 @@ from T5 import MyT5
 
 
 def run(args, logger):
-    if args.model.lower() == "bart":
-        tokenizer = BartTokenizer.from_pretrained("bart-large")
-        # tokenizer = BartTokenizer.from_pretrained("bart-large")
-    elif args.model.lower() == "t5":
-        # tokenizer = T5Tokenizer.from_pretrained("t5-large")
-        tokenizer = T5Tokenizer.from_pretrained("t5-base")
+
+    if args.predict_type.lower() == "spanseqgen":
+        if args.model.lower() == "bart":
+            tokenizer = BartTokenizer.from_pretrained("bart-large")
+            # tokenizer = BartTokenizer.from_pretrained("bart-large")
+        elif args.model.lower() == "t5":
+            # tokenizer = T5Tokenizer.from_pretrained("t5-large")
+            tokenizer = T5Tokenizer.from_pretrained("t5-base")
+        else:
+            print("wrong model argument")
+            exit()
+    elif args.predict_type.lower() == "spanextraction":
+        if args.model.lower() == "bert":
+            tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+            
+        else:
+            logger.warn("Please specify correct model for span extraction. e.g. bert")
     else:
-        print("wrong model argument")
+        print("wrong argument: ",  args.predict_type.lower())
         exit()
+
     if args.do_tokenize:
         # during the process train_data will be overwritten, so memory will be collected
         for k in range(5, 15):
@@ -107,13 +120,19 @@ def run(args, logger):
                 elif args.model.lower() == "t5":
                     # model = MyT5.from_pretrained('t5-large')
                     model = MyT5.from_pretrained('t5-base')
-
                 else:
                     print("wrong model argument")
                     exit()
+            # span extraction
             elif args.predict_type.lower() == "spanextraction":
                 logger.info("Bert model enabled for span predictions") 
-                model = SpanPredictor().from_pretrained("bert")
+                if args.model.lower() != "bert":
+                    logger.warn(f"Correct span extraction model from {args.model} to bert" )
+                # TODO: add more variants span extraction pre-trained model
+                config = BertConfig.from_pretrained("bert-base-uncased")
+                # NOTE: what can make the predictor inherit pretrained weights?
+                model = SpanPredictor.from_pretrained(
+                    "bert-base-uncased", config=config)
             if args.device == "cuda" and torch.cuda.device_count() > 1:
                 if args.n_gpu == 1:
                     logger.warning("User specified one gpu but there are actually {}, it has been corrected".format(torch.cuda.device_count()))
@@ -156,7 +175,7 @@ def run(args, logger):
         # elif torch.cuda.is_available():
         #     model.to(torch.device("cuda"))
         model.eval()
-        ems = inference(model, dev_data, args.predict_type , save_predictions=True)
+        ems = inference(model, dev_data, args.predict_type, device=args.device, save_predictions=True)
         logger.info("%s on %s data: %.2f" % (dev_data.metric, dev_data.data_type, np.mean(ems)*100))
 
 def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
@@ -185,17 +204,17 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
         for batch in train_data.dataloader:
             global_step += 1
 
-
-            # if args.single_gpu:
             batch = [b.to(args.device) for b in batch]
-            # elif torch.cuda.is_available():
-            #     batch = [b.to(torch.device("cuda")) for b in batch]
-            loss = model(input_ids=batch[0], attention_mask=batch[1],
+            if args.predict_type.lower() == "spanseqgen":
+                loss = model(input_ids=batch[0], attention_mask=batch[1],
                          decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
                          is_training=True)
+            elif args.predict_type.lower() == "spanextraction":
+                loss = model(input_ids=batch[0],  attention_mask=batch[1],
+                              token_type_ids=batch[2], 
+                              start_positions=batch[3], end_positions=batch[4], answer_mask=batch[5],
+                              is_training=True)
 
-            # import pdb
-            # pdb.set_trace()
             if args.n_gpu > 1:
                 loss = loss.mean() # mean() to average on multi-gpu.
             if torch.isnan(loss).data:
@@ -217,7 +236,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 # import pdb
                 # pdb.set_trace()
 
-                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.device, device = args.device, save_predictions=True)
+                curr_em = inference(model if args.n_gpu==1 else model.module, dev_data, args.predict_type, device = args.device, save_predictions=True)
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
                     global_step,
                     np.mean(train_losses),
@@ -252,6 +271,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
         if stop_training:
             break
 
+ 
 def inference(model, dev_data, predict_type, device = "cuda", save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
@@ -262,19 +282,53 @@ def inference(model, dev_data, predict_type, device = "cuda", save_predictions=F
     # elif predict_type == "SpanSeqGen":
     #     print("not implemented yet")
     #     exit()
-    
-    for i, batch in enumerate(dev_data.dataloader):
-        if torch.cuda.is_available():
-            batch = [b.to(device) for b in batch]
-        outputs = model.generate(input_ids=batch[0],
-                                 attention_mask=batch[1],
-                                 num_beams=dev_data.args.num_beams,
-                                 max_length=dev_data.args.max_output_length,
-                                 early_stopping=True,)
+    if predict_type.lower() == "spanseqgen": 
+        for i, batch in enumerate(dev_data.dataloader):
+            if torch.cuda.is_available():
+                batch = [b.to(device) for b in batch]
+            
+            outputs = model.generate(input_ids=batch[0],
+                                    attention_mask=batch[1],
+                                    num_beams=dev_data.args.num_beams,
+                                    max_length=dev_data.args.max_output_length,
+                                    early_stopping=True,)
+            # Q: span extraction: what it generates?
+            # overwrite bert generate function 
 
-        for input_, output in zip(batch[0], outputs):
-            pred = dev_data.decode(output)
-            predictions.append(pred)
+            # TODO: if it's logits then use decode function in span utils 
+            for input_, output in zip(batch[0], outputs):
+                pred = dev_data.decode(output)
+                predictions.append(pred)
+    elif predict_type.lower() == "spanextraction":
+        # import pdb
+        # pdb.set_trace()
+        # print("enable interactive mode and test code of evaluating span extraction")
+        for i, batch in enumerate(dev_data.dataloader):
+            if torch.cuda.is_available():
+                batch = [b.to(device) for b in batch]
+
+            start_logits, end_logits = model(input_ids=batch[0], attention_mask=batch[1],
+                            token_type_ids=batch[2], inputs_embeds=None,
+                            start_positions=batch[3], end_positions=batch[4], answer_mask=batch[5],
+                            is_training=False)
+            # Q: span extraction: what it generates?
+            # overwrite bert generate function
+
+            # TODO: add these arguments later
+            top_k_answers = 5
+            max_answer_length = 10 
+            text_predictions = decode(start_logits, end_logits, batch[0],
+                                 dev_data.tokenizer, top_k_answers, max_answer_length)
+
+
+            # TODO: if it's logits then use decode function in span utils
+
+            for input_, pred in zip(batch[0], text_predictions):
+                # import pdb
+                # pdb.set_trace()
+                # print("expect pred to be a list of tokens")
+                # pred = dev_data.decode(output)
+                predictions.append(pred)
 
     if save_predictions:
         dev_data.save_predictions(predictions)

@@ -5,6 +5,7 @@ from torch.nn import CrossEntropyLoss
 
 from transformers import BertForQuestionAnswering, AlbertForQuestionAnswering
 
+from span_utils import decode
 
 
 class SpanPredictor(BertForQuestionAnswering):
@@ -18,6 +19,7 @@ class SpanPredictor(BertForQuestionAnswering):
                 token_type_ids=None, inputs_embeds=None,
                 start_positions=None, end_positions=None, answer_mask=None,
                 is_training=False):
+        # check input embeds
 
         # input_ids, attention_mask, token_type_ids should have a shape of [batch_size, input_length]
         # start_positions, end_positions, answer_mask should have a shape of [batch_size, max_n_answers]
@@ -37,6 +39,18 @@ class SpanPredictor(BertForQuestionAnswering):
         else:
             return start_logits, end_logits
 
+    def generate(self, input_ids=None, attention_mask=None,
+                 token_type_ids=None, inputs_embeds=None,
+                 start_positions=None, end_positions=None, answer_mask=None,
+                 is_training=False):
+        start_logits, end_logits = self.forward(input_ids=None, attention_mask=None,
+                                                token_type_ids=None, inputs_embeds=None,
+                                                start_positions=None, end_positions=None, answer_mask=None,
+                                                is_training=False)
+        predictions = decode(start_logits, end_logits, input_ids,
+                              tokenizer, top_k_answers, max_answer_length)
+
+        return predictions
 
 def get_loss(start_positions, end_positions, answer_mask, start_logits, end_logits):
     answer_mask = answer_mask.type(torch.FloatTensor).cuda()
@@ -45,6 +59,7 @@ def get_loss(start_positions, end_positions, answer_mask, start_logits, end_logi
     end_positions.clamp_(0, ignored_index)
     loss_fct = CrossEntropyLoss(reduce=False, ignore_index=ignored_index)
 
+    # NOTE: torch unbind serves a way to generate a list of tensors
     start_losses = [(loss_fct(start_logits, _start_positions) * _span_mask) \
                     for (_start_positions, _span_mask) \
                     in zip(torch.unbind(start_positions, dim=1), torch.unbind(answer_mask, dim=1))]
@@ -53,7 +68,11 @@ def get_loss(start_positions, end_positions, answer_mask, start_logits, end_logi
                     in zip(torch.unbind(end_positions, dim=1), torch.unbind(answer_mask, dim=1))]
     loss_tensor = torch.cat([t.unsqueeze(1) for t in start_losses], dim=1) + \
         torch.cat([t.unsqueeze(1) for t in end_losses], dim=1) # sum up start loss and end loss for each prediction
-    loss_tensor=loss_tensor.view(N, M, -1).max(dim=1)[0]
+    # N: batch size
+    # M: output length (or input?) it should be input as 
+    N = len(start_positions) 
+    M = len(start_positions[0])
+    loss_tensor=loss_tensor.view(N, M, -1).max(dim=1)[0] # taking the maximum loss along dimension of input
     span_loss = _take_mml(loss_tensor)
     return span_loss
 

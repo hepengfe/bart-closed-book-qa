@@ -213,20 +213,23 @@ python cli.py \
         --max_input_length 750 \
         --top_k 5 \
         --eval_period 1
--------- bart with dataset aimbig and span extraction 
+---------- span extract
 python cli.py \
-        --model bart \
-        --do_train --output_dir out/ambig-bart-closed-qa \
-        --train_file data/ambigqa/train_light.json \
-        --predict_file data/ambigqa/dev_light.json \
+        --model bert \
+        --do_train --output_dir out/np-bert-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-dev.json \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
         --predict_type  SpanExtraction \
         --device 0 \
         --gradient_cp False \
-        --max_input_length 750 \
+        --max_input_length 512 \
         --top_k 5 \
-        --eval_period 1000
+        --eval_period 1000 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --debug
 """
 
 
@@ -316,8 +319,10 @@ def main():
 
     # parameters for SpanSeqGen
     parser.add_argument("--top_k", default=10, type=int)
-    parser.add_argument("--ranking_folder_path", default="data/reranking_results/ambigqa")
-    parser.add_argument("--data_folder_path", default="data/ambigqa")  # TODO: integerate it later
+    # "data/reranking_results/ambigqa"
+    parser.add_argument("--ranking_folder_path",
+                        default=None)  # "data/reranking_results/ambigqa"
+    parser.add_argument("--data_folder_path", default=None)  # data/ambigqa
     parser.add_argument("--passages_path", default="data/wiki/psgs_w100_20200201.tsv") # psgs_w100.tsv
 
     parser.add_argument("--eval_recall", default=False)
