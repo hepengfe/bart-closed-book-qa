@@ -224,14 +224,96 @@ python cli.py \
         --predict_type  SpanExtraction \
         --device 0 \
         --gradient_cp False \
-        --max_input_length 512 \
+        --max_input_length 1024 \
         --top_k 5 \
-        --eval_period 1000 \
+        --eval_period 1 \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv \
         --debug
+-----------
+python cli.py \
+        --model bert \
+        --do_train --output_dir out/np-bert-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 512 \
+        --top_k 5 \
+        --eval_period 1 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv
+---------
+python cli.py \
+        --model bert \
+        --do_train --output_dir out/np-bert-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device cpu \
+        --gradient_cp False \
+        --max_input_length 750 \
+        --top_k 5 \
+        --eval_period 1 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv
+---------
+python cli.py \
+        --model bert \
+        --do_train --output_dir out/np-bert-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 256 \
+        --top_k 5 \
+        --eval_period 1 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv
+------- eval_period = 0
+python cli.py \
+        --model bert \
+        --do_train --output_dir out/np-bert-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 256 \
+        --top_k 5 \
+        --eval_period 0 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv
+-------- Continue training Bart from model trained on NQ
+python cli.py \
+        --model bart \
+        --do_train --output_dir out/ambig-bart-closed-qa \
+        --train_file data/ambigqa/ambigqa_train.json \
+        --predict_file data/ambigqa/ambigqa_dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 750 \
+        --top_k 5 \
+        --eval_period 1
 """
-
 
 
 from __future__ import absolute_import
@@ -249,10 +331,11 @@ import torch
 
 from run import run
 
+
 def main():
     parser = argparse.ArgumentParser()
 
-    ## Basic parameters
+    # Basic parameters
     parser.add_argument("--train_file", default="data/nqopen-train.json")
     parser.add_argument("--predict_file", default="data/nqopen-dev.json")
     parser.add_argument("--output_dir", default=None, type=str, required=True)
@@ -261,8 +344,7 @@ def main():
     parser.add_argument("--do_tokenize", action='store_true')
     parser.add_argument("--predict_type", default="thresholding", type=str)
 
-
-    ## Model parameters
+    # Model parameters
     parser.add_argument("--model", type=str, default="bart")
     parser.add_argument("--checkpoint", type=str)
     parser.add_argument("--do_lowercase", action='store_true', default=True)
@@ -271,8 +353,9 @@ def main():
     parser.add_argument('--max_input_length', type=int, default=32)
     parser.add_argument('--max_output_length', type=int, default=20)
     parser.add_argument('--num_beams', type=int, default=4)
-    parser.add_argument("--append_another_bos", action='store_true', default=False)
-    parser.add_argument("--prepend_question_token", default = False)
+    parser.add_argument("--append_another_bos",
+                        action='store_true', default=False)
+    parser.add_argument("--prepend_question_token", default=False)
 
     # Training-related parameters
     parser.add_argument("--train_batch_size", default=40, type=int,
@@ -291,7 +374,8 @@ def main():
                         help="Max gradient norm.")
     parser.add_argument("--gradient_accumulation_steps", default=1, type=int,
                         help="Max gradient norm.")
-    parser.add_argument("--start_epoch", default=0, type=int, help="When restart from checkpoint, epoch will be overwritten to the correct one.")
+    parser.add_argument("--start_epoch", default=0, type=int,
+                        help="When restart from checkpoint, epoch will be overwritten to the correct one.")
     parser.add_argument("--num_train_epochs", default=10000.0, type=float,
                         help="Total number of training epochs to perform.")
 
@@ -311,11 +395,10 @@ def main():
                         help="Use a subset of data for debugging")
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
-    parser.add_argument('--device', type=str, default="cuda", help="Can be set to cpu or cuda or device number")
+    parser.add_argument('--device', type=str, default="cuda",
+                        help="Can be set to cpu or cuda or device number")
     parser.add_argument('--n_gpu', type=int, default=0)
     parser.add_argument('--gradient_cp', type=bool, default=False)
-
-
 
     # parameters for SpanSeqGen
     parser.add_argument("--top_k", default=10, type=int)
@@ -323,7 +406,8 @@ def main():
     parser.add_argument("--ranking_folder_path",
                         default=None)  # "data/reranking_results/ambigqa"
     parser.add_argument("--data_folder_path", default=None)  # data/ambigqa
-    parser.add_argument("--passages_path", default="data/wiki/psgs_w100_20200201.tsv") # psgs_w100.tsv
+    parser.add_argument(
+        "--passages_path", default="data/wiki/psgs_w100_20200201.tsv")  # psgs_w100.tsv
 
     parser.add_argument("--eval_recall", default=False)
 
@@ -333,24 +417,15 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir, exist_ok=True)
 
-
-
-
-
-    
-
-
-
-
-    ##### Start writing logs
+    # Start writing logs
 
     log_filename = "{}log.txt".format("" if args.do_train else "eval_")
 
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-                    datefmt='%m/%d/%Y %H:%M:%S',
-                    level=logging.INFO,
-                    handlers=[logging.FileHandler(os.path.join(args.output_dir, log_filename)),
-                              logging.StreamHandler()])
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO,
+                        handlers=[logging.FileHandler(os.path.join(args.output_dir, log_filename)),
+                                  logging.StreamHandler()])
     logger = logging.getLogger(__name__)
     logger.info(args)
     logger.info(args.output_dir)
@@ -359,7 +434,7 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     args.single_gpu = False
-    if args.device == "cuda": # use all gpus by default
+    if args.device == "cuda":  # use all gpus by default
         args.n_gpu = torch.cuda.device_count()
 
         # args.device = "cuda"
@@ -367,31 +442,35 @@ def main():
     elif args.device == "cpu":
         args.device = "cpu"
     else:
-         # indicate it wants to use specific gpu
+        # indicate it wants to use specific gpu
         args.device = int(args.device)
         args.n_gpu = 1
 
     # if args.n_gpu > 0:
     #     torch.cuda.manual_seed_all(args.seed)
     if not args.do_train and not args.do_predict and not args.do_tokenize:
-        raise ValueError("At least one of `do_train` or `do_predict` or `do_tokenize` must be True.")
+        raise ValueError(
+            "At least one of `do_train` or `do_predict` or `do_tokenize` must be True.")
 
     if args.do_train:
         if not args.train_file:
-            raise ValueError("If `do_train` is True, then `train_file` must be specified.")
+            raise ValueError(
+                "If `do_train` is True, then `train_file` must be specified.")
         if not args.predict_file:
-            raise ValueError("If `do_train` is True, then `predict_file` must be specified.")
+            raise ValueError(
+                "If `do_train` is True, then `predict_file` must be specified.")
 
     if args.do_predict:
         if not args.predict_file:
-            raise ValueError("If `do_predict` is True, then `predict_file` must be specified.")
+            raise ValueError(
+                "If `do_predict` is True, then `predict_file` must be specified.")
 
     if args.model.lower() == "t5" and args.prepend_question_token == False:
         logger.warning("t5 model needs prepending ")
-
-
+        
     logger.info("Using {} gpus".format(args.n_gpu))
     run(args, logger)
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     main()

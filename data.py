@@ -37,8 +37,9 @@ class QAData(object):
             self.data = json.load(f)  # format example: [ {'id': '-8178292525996414464', 'question': 'big little lies season 2 how many episodes', 'answer': ['seven']}, ..... ]
         if type(self.data)==dict:
             self.data = self.data["data"]
-        if args.debug:
-            self.data = self.data[:40]
+        # if args.debug:
+        #     self.data = self.data[:1000]
+
         assert type(self.data)==list
         assert all(["id" in d for d in self.data]), self.data[0].keys()
         if type(self.data[0]["id"])==int:
@@ -54,7 +55,8 @@ class QAData(object):
         else:
             self.is_training = False
         # TODO: correct it back
-        self.load = not args.debug  # do not load the large tokenized dataset
+        self.load = True  # debug mode also needs load 
+        # self.load = not args.debug  # do not load the large tokenized dataset
         # self.load =  args.debug
         self.logger = logger
         self.args = args
@@ -85,6 +87,7 @@ class QAData(object):
         # TODO: add tokenized path
         # TODO: add data naming and folder architecture into readme
 
+        # TODO: add encoded_path and check (saving time of tokenization and encoding) 
         # idea of naming detection is finding the folder name
         if any([n in args.ranking_folder_path for n in ["nq", "nqopen"]]):
             ranking_file_name = "nq_"
@@ -118,6 +121,7 @@ class QAData(object):
         else:
             print("Wrong predict_type!")
             exit()
+        
 
     def __len__(self):
         return len(self.data)
@@ -150,14 +154,16 @@ class QAData(object):
         postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(self.k), answer_type]) # TODO: can be written more elegantly by using dictionary
         if self.debug:
             postfix += "_debug"
-        preprocessed_path = os.path.join(
-            "/".join(self.data_path.split("/")[:-2]), "tokenized",
-            self.data_path.split("/")[-1].replace(".json", "-{}.json".format(postfix)))
+        tokenized_path = os.path.join(
+            "/".join(self.data_path.split("/")[:-2]), "Tokenized",
+            self.data_path.split("/")[-1].replace(".json", "-{}.json".format(postfix)))  # replace .json by a formatted postfix
         
 
-        if self.load and os.path.exists(preprocessed_path): 
-            self.logger.info("Loading pre-tokenized data from {}".format(preprocessed_path))
-            with open(preprocessed_path, "r") as f:
+        
+
+        if self.load and os.path.exists(tokenized_path): 
+            self.logger.info("Loading pre-tokenized data from {}".format(tokenized_path))
+            with open(tokenized_path, "r") as f:
                 if answer_type == "gen": 
                     input_ids, attention_mask, decoder_input_ids, decoder_attention_mask, \
                         metadata, passage_coverage_rate = json.load(f)
@@ -176,8 +182,8 @@ class QAData(object):
                         for d in self.data]
             answers = [d["answer"] for d in self.data]
             if self.debug:
-                questions = questions[:100]
-                answers = answers[:100]
+                questions = questions
+                answers = answers
             answers, metadata = self.flatten(answers)
             if self.args.do_lowercase:
                 questions = [question.lower() for question in questions]
@@ -223,6 +229,8 @@ class QAData(object):
                 is_training = self.data_type == "train" 
                 max_n_answers = 5
 
+                # for each question, add a list of passages info from reranking results 
+                # all titles and all passages should be a 2-d list
                 for i in tqdm(range(len(questions))):
                     cur_titles = []
                     cur_passages = []
@@ -234,8 +242,10 @@ class QAData(object):
                 # NOTE: pdb 
                 # import pdb
                 # pdb.set_trace()
+                encoded_path = tokenized_path.replace("Tokenized", "Encoded")
+
                 d = preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages, \
-                    is_training, self.max_input_length, max_n_answers)
+                               is_training, self.max_input_length, max_n_answers, encoded_path)
                 input_ids = d["input_ids"]
                 attention_mask = d["attention_mask"] 
                 token_type_ids  = d["token_type_ids"]
@@ -270,7 +280,7 @@ class QAData(object):
                 #         input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
                 #     self.dataset = TensorDataset(*list_of_tensors)
 
-                with open(preprocessed_path, "w") as fp:
+                with open(tokenized_path, "w") as fp:
                     if answer_type == "gen":
                         json.dump([input_ids, attention_mask,
                                 decoder_input_ids, decoder_attention_mask,
@@ -347,8 +357,6 @@ class QAData(object):
             answer_type = "seq"  # each answer is concatenation of all accpetable answers.   str
         
         assert len(predictions)==len(self), (len(predictions), len(self))
-        import pdb
-        pdb.set_trace()
         ems = []
         if answer_type == "seq":
             for (prediction, dp) in zip(predictions, self.data):
@@ -505,6 +513,7 @@ class MyDataLoader(DataLoader):
             sampler=RandomSampler(dataset)
             batch_size = args.train_batch_size
         else:
+            # sampler = RandomSampler(dataset)
             sampler=SequentialSampler(dataset)
             batch_size = args.predict_batch_size
         super(MyDataLoader, self).__init__(dataset, sampler=sampler, batch_size=batch_size)
