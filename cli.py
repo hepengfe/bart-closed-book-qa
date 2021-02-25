@@ -300,8 +300,10 @@ python cli.py \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv
 -------- Continue training Bart from model trained on NQ
+# previous argument train_bs=12 test_bs=12
 python cli.py \
         --model bart \
+        --checkpoint  out/out/nq-bart-closed-qa-best \
         --do_train --output_dir out/ambig-bart-closed-qa \
         --train_file data/ambigqa/ambigqa_train.json \
         --predict_file data/ambigqa/ambigqa_dev.json \
@@ -313,6 +315,7 @@ python cli.py \
         --max_input_length 750 \
         --top_k 5 \
         --eval_period 1
+        --debug
 """
 
 
