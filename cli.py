@@ -353,7 +353,7 @@ python cli.py \
 
 -------- Continue training Bart from model trained on NQ, also it uses wiki 2020
 # previous argument train_bs=12 test_bs=12
-CUDA_VISIBLE_GPUS=1 python cli.py \
+CUDA_VISIBLE_DEVICES=1 python cli.py \
         --model bart \
         --checkpoint  out/nq-bart-closed-qa-best/best-model.pt \
         --do_train --output_dir out/ambig-bart-closed-qa \
@@ -366,6 +366,7 @@ CUDA_VISIBLE_GPUS=1 python cli.py \
         --gradient_cp False \
         --max_input_length 750 \
         --top_k_passages 5 \
+        --top_k_answers 5 \
         --eval_period 1000 \
         --ranking_folder_path data/reranking_results/ambigqa \
         --data_folder_path data/ambigqa \

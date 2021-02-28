@@ -75,7 +75,7 @@ class QAData(object):
         self.dataloader = None
         self.cache = None
         self.debug = args.debug
-        self.answer_type = "span" if "span" in args.predict_type.lower() else "seq" # TODO: condition on args.predict_type
+        self.answer_type = "span" if "Extraction" in args.predict_type.lower() else "seq" # TODO: condition on args.predict_type
         logger.info(f"answer type is {self.answer_type}")
         self.dataset_type = None
         self.passages = None
@@ -127,7 +127,6 @@ class QAData(object):
         return new_answers, metadata
 
     def load_dataset(self, tokenizer, do_return=False):
-        # self.answer_type = "span"  # TODO: add it to argument
         logging_prefix = f"[{self.data_type} data]   "
         self.tokenizer = tokenizer
 
@@ -164,7 +163,7 @@ class QAData(object):
 
         if self.load and self.cache:
             self.logger.info(logging_prefix + "Found pickle cache, start loading...")
-            if self.answer_type == "gen":
+            if self.answer_type == "seq":
                 # so we load encoding (it's batch + dictionary) and then pass then into 
 
                 # input_ids, attention_mask, decoder_input_ids, decoder_attention_mask, \
@@ -200,7 +199,7 @@ class QAData(object):
             if self.load and os.path.exists(tokenized_path): 
                 self.logger.info(logging_prefix + "Loading pre-tokenized data from {}".format(tokenized_path))
                 with open(tokenized_path, "r") as f:
-                    if self.answer_type == "gen": 
+                    if self.answer_type == "seq": 
                         input_ids, attention_mask, decoder_input_ids, decoder_attention_mask, \
                             metadata, passage_coverage_rate = json.load(f)
                         
@@ -259,7 +258,7 @@ class QAData(object):
 
 
                 self.logger.info(logging_prefix +  "Start concatenating question and encoding")
-                if self.answer_type == "gen":
+                if self.answer_type == "seq":
 
                     # TODO: add function pre_process in utils.py  
                     if prepend_question_token:
@@ -267,7 +266,7 @@ class QAData(object):
                     questions = ["<s> " + q for q in questions]
                     # TODO: add them to arguments
                     # note that after this questions are actually a concatenation of questions and passages
-                    print(logging_prefix + "Start concatenating question and passages for top ", self.k , " passages")
+                    print(logging_prefix + "Start concatenating question and passages for top ", self.top_k_passages , " passages")
                     for i in tqdm(range(len(questions))):
                         for p in self.passages.get_passages(i): # add passage one by one
                             questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
@@ -339,7 +338,7 @@ class QAData(object):
                     exit()     
                 if self.load:
                     with open(tokenized_path, "w") as fp:
-                        if self.answer_type == "gen":
+                        if self.answer_type == "seq":
                             json.dump([input_ids, attention_mask,
                                     decoder_input_ids, decoder_attention_mask,
                                     metadata, passage_coverage_rate], fp)
@@ -348,7 +347,7 @@ class QAData(object):
                                     end_positions, answer_mask, answer_coverage_rate], fp)
         
         # loading dataset
-        if self.answer_type == "gen":
+        if self.answer_type == "seq":
             self.dataset = QAGenDataset(input_ids, attention_mask,
                                         decoder_input_ids, decoder_attention_mask,
                                         in_metadata=None, out_metadata=metadata,
