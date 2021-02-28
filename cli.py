@@ -277,12 +277,12 @@ python cli.py \
         --device 0 \
         --gradient_cp False \
         --max_input_length 256 \
-        --top_k 5 \
+        --top_k_passages 5 \
         --eval_period 1 \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
-        --passages_path data/wiki/psgs_w100.tsv
-------- eval_period = 0
+        --passages_path data/wiki/psgs_w100.tsv 
+------- eval_period = 100, train
 python cli.py \
         --model bert \
         --do_train --output_dir out/np-bert-closed-qa \
@@ -294,16 +294,68 @@ python cli.py \
         --device 0 \
         --gradient_cp False \
         --max_input_length 256 \
-        --top_k 5 \
-        --eval_period 0 \
+        --top_k_passages 5 \
+        --eval_period 100 \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv
--------- Continue training Bart from model trained on NQ
-# previous argument train_bs=12 test_bs=12
+--------- eval  (predict)
 python cli.py \
+        --model bert \
+        --do_predict --output_dir out/np-bert-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 256 \
+        --top_k_passages 5 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv
+------------ bert training
+python cli.py \
+        --model bert \
+        --do_train --output_dir out/nq-bert-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device 0 \
+        --gradient_cp False \
+        --max_input_length 512 \
+        --top_k_passages 5 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv
+
+
+
+# ---------- span extraction on disambig (not asked)
+# python cli.py \
+#         --model bert \
+#         --do_train --output_dir out/ambigqa-bert-closed-qa \
+#         --train_file  data/ambigqa/ambigqa_train.json  \
+#         --predict_file data/ambigqa/ambigqa_dev.json \
+#         --train_batch_size ${train_bs} \
+#         --predict_batch_size ${test_bs} \
+#         --predict_type  SpanExtraction \
+#         --device 0 \
+#         --gradient_cp False \
+#         --max_input_length 256 \
+#         --top_k_passages 5 \
+#         --ranking_folder_path data/reranking_results/ambigqa \
+#         --data_folder_path data/ambigqa \
+#         --passages_path data/wiki/psgs_w100.tsv
+
+-------- Continue training Bart from model trained on NQ, also it uses wiki 2020
+# previous argument train_bs=12 test_bs=12
+CUDA_VISIBLE_GPUS=1 python cli.py \
         --model bart \
-        --checkpoint  out/out/nq-bart-closed-qa-best \
+        --checkpoint  out/nq-bart-closed-qa-best/best-model.pt \
         --do_train --output_dir out/ambig-bart-closed-qa \
         --train_file data/ambigqa/ambigqa_train.json \
         --predict_file data/ambigqa/ambigqa_dev.json \
@@ -313,9 +365,12 @@ python cli.py \
         --device 0 \
         --gradient_cp False \
         --max_input_length 750 \
-        --top_k 5 \
-        --eval_period 1
-        --debug
+        --top_k_passages 5 \
+        --eval_period 1000 \
+        --ranking_folder_path data/reranking_results/ambigqa \
+        --data_folder_path data/ambigqa \
+        --passages_path data/wiki/psgs_w100_20200201.tsv \
+        --fine_tune
 """
 
 
@@ -350,7 +405,9 @@ def main():
     # Model parameters
     parser.add_argument("--model", type=str, default="bart")
     parser.add_argument("--checkpoint", type=str)
+    parser.add_argument("--fine_tune", action="store_true" )
     parser.add_argument("--do_lowercase", action='store_true', default=True)
+
 
     # Preprocessing/decoding-related parameters
     parser.add_argument('--max_input_length', type=int, default=32)
@@ -404,13 +461,15 @@ def main():
     parser.add_argument('--gradient_cp', type=bool, default=False)
 
     # parameters for SpanSeqGen
-    parser.add_argument("--top_k", default=10, type=int)
+    parser.add_argument("--top_k_passages", default=10, type=int)
     # "data/reranking_results/ambigqa"
     parser.add_argument("--ranking_folder_path",
                         default=None)  # "data/reranking_results/ambigqa"
     parser.add_argument("--data_folder_path", default=None)  # data/ambigqa
     parser.add_argument(
         "--passages_path", default="data/wiki/psgs_w100_20200201.tsv")  # psgs_w100.tsv
+    parser.add_argument("--top_k_answers", default=1, type=int)
+    parser.add_argument("--max_answer_length", default=10, type=int)
 
     parser.add_argument("--eval_recall", default=False)
 

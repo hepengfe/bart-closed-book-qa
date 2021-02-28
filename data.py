@@ -15,7 +15,8 @@ import data
 import pickle
 from collections import defaultdict
 from bart import MyBartModel
-from span_utils import preprocess
+from span_utils import preprocess_span_input, dump_pickle, load_pickle
+
 class QAData(object):
 
     def __init__(self, logger, args, data_path, dataset_type):
@@ -37,8 +38,8 @@ class QAData(object):
             self.data = json.load(f)  # format example: [ {'id': '-8178292525996414464', 'question': 'big little lies season 2 how many episodes', 'answer': ['seven']}, ..... ]
         if type(self.data)==dict:
             self.data = self.data["data"]
-        # if args.debug:
-        #     self.data = self.data[:1000]
+        if args.debug:
+            self.data = self.data[:1000]
 
         assert type(self.data)==list
         assert all(["id" in d for d in self.data]), self.data[0].keys()
@@ -50,10 +51,9 @@ class QAData(object):
 
         self.index2id = {i:d["id"] for i, d in enumerate(self.data)}
         self.id2index = {d["id"]:i for i, d in enumerate(self.data)}
-        if dataset_type == "train":
-            self.is_training = True
-        else:
-            self.is_training = False
+
+        self.is_training = dataset_type == "train"
+
         # TODO: correct it back
         self.load = True  # debug mode also needs load 
         # self.load = not args.debug  # do not load the large tokenized dataset
@@ -74,53 +74,39 @@ class QAData(object):
         self.dataset = None
         self.dataloader = None
         self.cache = None
-        self.concatenateQA = False
         self.debug = args.debug
-        self.answer_type = "span" # TODO: condition on args.predict_type
-
-        # provides paths for pasting convenience
+        self.answer_type = "span" if "span" in args.predict_type.lower() else "seq" # TODO: condition on args.predict_type
+        logger.info(f"answer type is {self.answer_type}")
+        self.dataset_type = None
+        self.passages = None
         
-        #  data/ambigqa/ambigqa_train.json
-
-
-        # load passages dataset
-        # TODO: add tokenized path
-        # TODO: add data naming and folder architecture into readme
-
-        # TODO: add encoded_path and check (saving time of tokenization and encoding) 
         # idea of naming detection is finding the folder name
         if any([n in args.ranking_folder_path for n in ["nq", "nqopen"]]):
             ranking_file_name = "nq_"
             data_file_n = "nqopen-"
+            assert any(n in args.data_folder_path for n in ["nq", "nqopen"] ) == True,\
+                 "data folder path/ranking_folder_path is wrong"
+            assert any(n in self.data_path for n in ["nq", "nqopen"]) == True,\
+                 "data path/ranking_folder_path is wrong"
+            self.dataset_type = "nq"
         elif any([n in args.ranking_folder_path for n in ["ambigqa"]]):
             ranking_file_name = "ambigqa_"
             data_file_n = "ambigqa_"  # NOTE: it's for light data only
+            assert "ambigqa" in args.data_folder_path,\
+                "data folder path/ranking_folder_path is wrong"
+            assert "ambigqa" in self.data_path,\
+                "data path/ranking_folder_path is wrong"
+            self.dataset_type = "ambig"
         else:
-            print("args.ranking_folder_path: ", args.ranking_folder_path)
+            self.logger.warn("args.ranking_folder_path: ", args.ranking_folder_path)
             exit()
-        # import pdb
-        # pdb.set_trace()
-        if args.predict_type == "SpanSeqGen":
-            self.concatenateQA = True
+        self.wiki_passage_path = args.passages_path
+        self.ranking_path = os.path.join(
+            args.ranking_folder_path, f"{ranking_file_name}{dataset_type}.json")
+        self.data_path = os.path.join(
+            args.data_folder_path, f"{data_file_n}{dataset_type}.json")
+        self.top_k_passages = args.top_k_passages
 
-            self.k = args.top_k
-            wiki_passage_path = args.passages_path
-
-
-
-            ranking_path = os.path.join(args.ranking_folder_path, f"{ranking_file_name}{dataset_type}.json")
-            data_path = os.path.join(args.data_folder_path, f"{data_file_n}{dataset_type}.json")
-            self.passages = topKPassasages(self.k, wiki_passage_path, ranking_path, data_path)
-        elif args.predict_type == "SpanExtraction":
-            self.concatenateQA = True
-            self.k = args.top_k
-            wiki_passage_path = args.passages_path
-            ranking_path = os.path.join(args.ranking_folder_path, f"{ranking_file_name}{dataset_type}.json")
-            data_path = os.path.join(args.data_folder_path, f"{data_file_n}{dataset_type}.json")
-            self.passages = topKPassasages(self.k, wiki_passage_path, ranking_path, data_path) 
-        else:
-            print("Wrong predict_type!")
-            exit()
         
 
     def __len__(self):
@@ -141,7 +127,8 @@ class QAData(object):
         return new_answers, metadata
 
     def load_dataset(self, tokenizer, do_return=False):
-        answer_type = "span"  # TODO: add it to argument
+        # self.answer_type = "span"  # TODO: add it to argument
+        logging_prefix = f"[{self.data_type} data]   "
         self.tokenizer = tokenizer
 
         # NOTE:  Might have bug here 
@@ -151,151 +138,222 @@ class QAData(object):
         prepend_question_token = False
         if postfix[:2].lower() == "t5": # TODO: find a smarter way to check if it's dataset for T5
            prepend_question_token = True
-        postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(self.k), answer_type]) # TODO: can be written more elegantly by using dictionary
+        postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(
+            self.top_k_passages), self.answer_type])  # TODO: can be written more elegantly by using dictionary
         if self.debug:
             postfix += "_debug"
+        # TODO: decide to delete tokenized path if it's finally not needed
         tokenized_path = os.path.join(
             "/".join(self.data_path.split("/")[:-2]), "Tokenized",
             self.data_path.split("/")[-1].replace(".json", "-{}.json".format(postfix)))  # replace .json by a formatted postfix
-        
+        encoded_input_path = tokenized_path.replace("Tokenized", "Encoded").replace(".json", "_input.p")
+        encoded_answer_path = tokenized_path.replace("Tokenized", "Encoded").replace(".json", "_answer.p")
+        metadata_path = tokenized_path.replace(
+            "Tokenized", "Encoded").replace(".json", "_metadata.p")
+        # 1. check if there is cache, if not then tokenize. If there is cache, we 
+        # 2. check if
+        # import pdb; pdb.set_trace(); print("check encoded path") 
+        self.cache = os.path.exists(encoded_input_path) \
+                and os.path.exists(encoded_answer_path) \
+                and os.path.exists(metadata_path)
 
-        
+        # General procedure:
+        # 1. check if pickle cache exists
+        # 2. if not, check if tokenized data exists
+        # 3. if not, preprocess(load passages and encode) from scratch
 
-        if self.load and os.path.exists(tokenized_path): 
-            self.logger.info("Loading pre-tokenized data from {}".format(tokenized_path))
-            with open(tokenized_path, "r") as f:
-                if answer_type == "gen": 
-                    input_ids, attention_mask, decoder_input_ids, decoder_attention_mask, \
-                        metadata, passage_coverage_rate = json.load(f)
-                    
-                elif answer_type == "span":
-                    input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask, passage_coverage_rate = json.load(
-                        f)
-                else:
-                    print("Unrecognizable answer type")
-                    exit()   
-                print("Passage coverage rate: ",
-                      passage_coverage_rate * 100, " %")
-        else:
-            print ("Start tokenizing...")
-            questions = [d["question"] if d["question"].endswith("?") else d["question"]+"?"
-                        for d in self.data]
-            answers = [d["answer"] for d in self.data]
-            if self.debug:
-                questions = questions
-                answers = answers
-            answers, metadata = self.flatten(answers)
-            if self.args.do_lowercase:
-                questions = [question.lower() for question in questions]
-                answers = [answer.lower() for answer in answers]
+        if self.load and self.cache:
+            self.logger.info(logging_prefix + "Found pickle cache, start loading...")
+            if self.answer_type == "gen":
+                # so we load encoding (it's batch + dictionary) and then pass then into 
 
-
-
-            if answer_type == "gen":
-                if prepend_question_token:
-                       questions = ["question: " + question for question in questions] 
-                questions = ["<s> " + q for q in questions]
-                # TODO: add them to arguments
-                # note that after this questions are actually a concatenation of questions and passages
-                print("Start concatenating question and passages for top ", self.k , " passages")
-                for i in tqdm(range(len(questions))):
-                    for p in self.passages.get_passages(i): # add passage one by one
-                        questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
-                    questions[i] += " </s>"
-
-                print("Encoding questions and answers, this might take a while")
-                question_input = tokenizer.batch_encode_plus(questions,
-                                                         pad_to_max_length=True,
-                                                         max_length=self.args.max_input_length,
-                                                         return_overflowing_tokens=True)
-                answer_input = tokenizer.batch_encode_plus(answers,
-                                                       pad_to_max_length=True)
-            # add answer type variable 
-            # two types of question answering
+                # input_ids, attention_mask, decoder_input_ids, decoder_attention_mask, \
+                #     metadata, passage_coverage_rate = json.load(f)
+                question_input, answer_input, metadata = load_pickle(
+                    encoded_input_path, encoded_answer_path, metadata_path)
                 input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
-                decoder_input_ids, decoder_attention_mask = answer_input["input_ids"], answer_input["attention_mask"]
+                decoder_input_ids, decoder_attention_mask = answer_input[
+                    "input_ids"], answer_input["attention_mask"]
+                # inputs are lists of integers 
                 
-                num_truncated_tokens = sum(question_input['num_truncated_tokens']) 
-                num_quesiton_ids = sum(  [ len(question) for question in  question_input['input_ids'] ] ) 
-                passage_coverage_rate =   num_quesiton_ids    / (num_truncated_tokens + num_quesiton_ids) 
-                print("Passage coverage rate: ", passage_coverage_rate * 100, " %")
-            elif answer_type == "span":
-                # assume questions = [Q1, Q2]
-                # answers = [[A1 <SEP> A2], [A3]]
-                # all titles = [ [T1, T2, ..., T100], [T1, T2, ..., T100]   ]
-                # TODO: add some of these arguments into questions 
-                all_titles = []
-                all_passages = []
-                is_training = self.data_type == "train" 
-                max_n_answers = 5
 
-                # for each question, add a list of passages info from reranking results 
-                # all titles and all passages should be a 2-d list
-                for i in tqdm(range(len(questions))):
-                    cur_titles = []
-                    cur_passages = []
-                    for p in self.passages.get_passages(i):
-                        cur_titles.append(p["title"])
-                        cur_passages.append(p["text"])
-                    all_titles.append(cur_titles)
-                    all_passages.append(cur_passages)
-                # NOTE: pdb 
-                # import pdb
-                # pdb.set_trace()
-                encoded_path = tokenized_path.replace("Tokenized", "Encoded")
-
-                d = preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages, \
-                               is_training, self.max_input_length, max_n_answers, encoded_path)
+            elif self.answer_type == "span":
+                d = preprocess_span_input(
+                    encoded_input_path, encoded_answer_path, metadata_path, \
+                    self.logger, tokenizer, self.max_input_length, is_training=self.is_training)
                 input_ids = d["input_ids"]
-                attention_mask = d["attention_mask"] 
-                token_type_ids  = d["token_type_ids"]
-                start_positions = d["start_positions"] 
+                attention_mask = d["attention_mask"]
+                token_type_ids = d["token_type_ids"]
+                start_positions = d["start_positions"]
                 end_positions = d["end_positions"]
                 answer_mask = d["answer_mask"]
                 # Q: input  (QA concatenation, y= answer?)
                 # label is the start and end positions
                 answer_coverage_rate = d["answer_coverage_rate"]
-
-
-
-
+                self.logger.info(f"answer coverage rate by passages: {answer_coverage_rate}")
             else:
-                print("Unrecognizable answer type")
-                exit()     
-            if self.load:
-                # save tokenized data in training mode
-                # if answer_type == "gen":
-                #     preprocessed_data = [input_ids, attention_mask,
-                #                         decoder_input_ids, decoder_attention_mask,
-                #                         metadata, passage_coverage_rate]
-                    
-                    
-                # elif answer_type == "span":
-                #     import pdb
-                #     pdb.set_trace()
-                #     preprocessed_data = d
-                #     # self.dataset = QASpanDataset(*d.values()) 
-                #     # self.dataset = Dataset(input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
-                #     list_of_tensors = self.tensorize(
-                #         input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
-                #     self.dataset = TensorDataset(*list_of_tensors)
+                self.logger.warn("wrong answer type")
+                exit()
+        else: 
+            self.logger.info(logging_prefix + "Not found pickle cache, start preprocessing...")
+            
+            if self.load and os.path.exists(tokenized_path): 
+                self.logger.info(logging_prefix + "Loading pre-tokenized data from {}".format(tokenized_path))
+                with open(tokenized_path, "r") as f:
+                    if self.answer_type == "gen": 
+                        input_ids, attention_mask, decoder_input_ids, decoder_attention_mask, \
+                            metadata, passage_coverage_rate = json.load(f)
+                        
+                    elif self.answer_type == "span":
+                        input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask, passage_coverage_rate = json.load(
+                            f)
+                    else:
+                        self.logger.warn(logging_prefix + "Unrecognizable answer type")
+                        exit()   
+                    self.logger.info(logging_prefix + f"Passage coverage rate: {passage_coverage_rate * 100} %")
+            else:
+                self.logger.info(logging_prefix + "Not found tokenized data, start tokenizing...")
 
-                with open(tokenized_path, "w") as fp:
-                    if answer_type == "gen":
-                        json.dump([input_ids, attention_mask,
-                                decoder_input_ids, decoder_attention_mask,
-                                metadata, passage_coverage_rate], fp)
-                    elif answer_type == "span":
-                        json.dump([input_ids, attention_mask, token_type_ids, start_positions,
-                                   end_positions, answer_mask, answer_coverage_rate], fp)
+                self.logger.info(logging_prefix + "Not found tokenized data, start loading passagesing...")
+                self.passages = topKPassasages(
+                    self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path)
+                questions = [d["question"] if d["question"].endswith("?") else d["question"]+"?"
+                            for d in self.data]
+                if self.dataset_type == "ambig":
+                    answers = []
+                    for d in self.data:
+                        cur_answer = []
+                        for qa_d in d["annotations"]:
+                            if qa_d["type"] == "singleAnswer":
+                                # answers.append(qa_d["answer"])
+                                cur_answer.extend(qa_d["answer"])
+                            elif qa_d["type"] == "multipleQAs":
+                                # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+                                pair_answers = []
+                                for pair in qa_d["qaPairs"]:
+                                    pair_answers.extend(pair["answer"]) if len(
+                                        pair["answer"]) > 1 else pair_answers.append(pair["answer"][0])
+                                cur_answer.extend(pair_answers)
+                            else:
+                                self.logger.warn("error in qa_d type: ")
+                                exit()
+                        answers.append(cur_answer) # for one question, there is one list of answers
+                        # import pdb; pdb.set_trace()
+                        # print("check cur_answer")
+                elif self.dataset_type == "nq":
+                    answers = [d["answer"] for d in self.data]
+                else:
+                    self.logger.warn(
+                        f"wrong dataset type: {self.dataset_type}")
+                    exit()
+                # add a length check
+                if self.debug:
+                    questions = questions
+                    answers = answers
+                
+                answers, metadata = self.flatten(answers)
+                
+                if self.args.do_lowercase:
+                    questions = [question.lower() for question in questions]
+                    answers = [answer.lower() for answer in answers]
+
+
+                self.logger.info(logging_prefix +  "Start concatenating question and encoding")
+                if self.answer_type == "gen":
+
+                    # TODO: add function pre_process in utils.py  
+                    if prepend_question_token:
+                        questions = ["question: " + question for question in questions] 
+                    questions = ["<s> " + q for q in questions]
+                    # TODO: add them to arguments
+                    # note that after this questions are actually a concatenation of questions and passages
+                    print(logging_prefix + "Start concatenating question and passages for top ", self.k , " passages")
+                    for i in tqdm(range(len(questions))):
+                        for p in self.passages.get_passages(i): # add passage one by one
+                            questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
+                        questions[i] += " </s>"
+
+        
+                    self.logger.info(
+                        logging_prefix + "Start encoding questions and answers, this might take a while")
+                    question_input = tokenizer.batch_encode_plus(questions,
+                                                            pad_to_max_length=True,
+                                                            max_length=self.args.max_input_length,
+                                                            return_overflowing_tokens=True,
+                                                            verbose=self.args.verbose)
+                    answer_input = tokenizer.batch_encode_plus(answers,
+                                                               pad_to_max_length=True, verbose=self.args.verbose)
+                    dump_pickle(question_input, answer_input, metadata, encoded_input_path,
+                                 encoded_answer_path, metadata_path)
+                    # add answer type variable 
+                    # two types of question answering
+                    input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
+                    decoder_input_ids, decoder_attention_mask = answer_input["input_ids"], answer_input["attention_mask"]
+                    
+                    num_truncated_tokens = sum(question_input['num_truncated_tokens']) 
+                    num_quesiton_ids = sum(  [ len(question) for question in  question_input['input_ids'] ] ) 
+                    passage_coverage_rate =   num_quesiton_ids    / (num_truncated_tokens + num_quesiton_ids) 
+                    self.logger.info(
+                        logging_prefix + f"Passage coverage rate: {passage_coverage_rate * 100} %")
+                elif self.answer_type == "span":
+                    # assume questions = [Q1, Q2]
+                    # answers = [[A1 <SEP> A2], [A3]]
+                    # all titles = [ [T1, T2, ..., T100], [T1, T2, ..., T100]   ]
+                    # TODO: add some of these arguments into questions 
+                    all_titles = []
+                    all_passages = []
+                    
+
+                    # for each question, add a list of passages info from reranking results 
+                    # all titles and all passages should be a 2-d list
+                    for i in tqdm(range(len(questions))):
+                        cur_titles = []
+                        cur_passages = []
+                        for p in self.passages.get_passages(i):
+                            cur_titles.append(p["title"])
+                            cur_passages.append(p["text"])
+                        all_titles.append(cur_titles)
+                        all_passages.append(cur_passages)
+                    self.logger.info(logging_prefix +
+                                     "Start preprocessing span input")
+                    d = preprocess_span_input(
+                        encoded_input_path, encoded_answer_path, metadata_path, \
+                        self.logger, tokenizer, self.max_input_length,
+                        questions=questions, answers=answers, metadata=metadata, all_titles=all_titles, all_passages=all_passages, is_training=self.is_training)
+
+                    input_ids = d["input_ids"]
+                    attention_mask = d["attention_mask"] 
+                    token_type_ids  = d["token_type_ids"]
+                    start_positions = d["start_positions"] 
+                    end_positions = d["end_positions"]
+                    answer_mask = d["answer_mask"]
+                    # Q: input  (QA concatenation, y= answer?)
+                    # label is the start and end positions
+                    answer_coverage_rate = d["answer_coverage_rate"]
+
+
+
+
+                else:
+                    print("Unrecognizable answer type")
+                    exit()     
+                if self.load:
+                    with open(tokenized_path, "w") as fp:
+                        if self.answer_type == "gen":
+                            json.dump([input_ids, attention_mask,
+                                    decoder_input_ids, decoder_attention_mask,
+                                    metadata, passage_coverage_rate], fp)
+                        elif self.answer_type == "span":
+                            json.dump([input_ids, attention_mask, token_type_ids, start_positions,
+                                    end_positions, answer_mask, answer_coverage_rate], fp)
         
         # loading dataset
-        if answer_type == "gen":
+        if self.answer_type == "gen":
             self.dataset = QAGenDataset(input_ids, attention_mask,
                                         decoder_input_ids, decoder_attention_mask,
                                         in_metadata=None, out_metadata=metadata,
                                         is_training=self.is_training)
-        elif answer_type == "span":
+        elif self.answer_type == "span":
             # import pdb
             # pdb.set_trace()
 
@@ -307,9 +365,10 @@ class QAData(object):
                 input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
             self.dataset = TensorDataset(*list_of_tensors)
         else:
-            print("wrong answer_type argument")
+            print("wrong self.answer_type argument")
             exit()
-        self.logger.info("Loaded {} examples from {} data".format(len(self.dataset), self.data_type))
+        self.logger.info(
+            logging_prefix + "Loaded {} examples from {} data".format(len(self.dataset), self.data_type))
 
         if do_return:
             return self.dataset
@@ -352,13 +411,13 @@ class QAData(object):
             [type]: [description]
         """
         if type(predictions[0])== list:
-            answer_type = "span" # each answer is a list of all acceptable answers.   [str, str]
+            self.answer_type = "span" # each answer is a list of all acceptable answers.   [str, str]
         else:
-            answer_type = "seq"  # each answer is concatenation of all accpetable answers.   str
+            self.answer_type = "seq"  # each answer is concatenation of all accpetable answers.   str
         
         assert len(predictions)==len(self), (len(predictions), len(self))
         ems = []
-        if answer_type == "seq":
+        if self.answer_type == "seq":
             for (prediction, dp) in zip(predictions, self.data):
                 ems.append(get_exact_match(prediction, dp["answer"]))
         else:
@@ -395,84 +454,6 @@ def normalize_answer(s):
     return white_space_fix(remove_articles(remove_punc(lower(s))))
 
 
-
-# class QASpanDataset(Dataset):
-#     # Q: do I need this class of dataset? 
-#     # Q: if so, do I need negative dataset? I don't think so as it's was used to train dpr retriever
-#     def __init__(self, input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask) -> None:
-#         """[summary]
-#         Tensorize list input
-
-#         Args:
-#             input_ids ([type]): [description]
-#             attention_mask ([type]): [description]
-#             token_type_ids ([type]): [description]
-#             start_positions ([type]): [description]
-#             end_positions ([type]): [description]
-#             answer_mask ([type]): [description]
-#             offset_mapping ([type]): [description]
-#             raw_inputs ([type]): [description]
-#         """
-
-#         import pdb
-#         pdb.set_trace()
-
-#         # M is number of passage per question
-#         # input ids = number of question x number of passages
-#         self.input_ids = self.tensorize(input_ids)   # 40 x non-uniform list
-#         self.attention_mask = self.tensorize(attention_mask) 
-#         self.token_type_ids = self.tensorize(token_type_ids) 
-#         self.start_positions = self.tensorize(start_positions) 
-#         self.end_positions = self.tensorize(end_positions) 
-#         self.answer_mask = self.tensorize(answer_mask) 
-       
-#     def tensorize(self, data):
-#         return [torch.LongTensor(d) for d in data] 
-
-#     def _pad(self, input_ids, M):
-#         # input_ids is a tensor of one input
-#         # if no input ids, then return zeros tensor
-#         if len(input_ids)==0:
-#             return torch.zeros((M, self.negative_input_ids[0].size(1)), dtype=torch.long)
-#         # stack input ids
-#         if type(input_ids)==list:
-#             input_ids = torch.stack(input_ids)
-#         # 
-#         if len(input_ids)==M:
-#             return input_ids
-#         return torch.cat([input_ids,
-#                             torch.zeros((M-input_ids.size(0), input_ids.size(1)), dtype=torch.long)],
-#                             dim=0)
-
-#     def __len__(self):
-#         return len(self.in_metadata)
-    
-#     def __getitem__(self, idx):
-#         """There are two types of data
-#         Input data: question, attention_mask
-#         Output data:  answer
-
-#         Args:
-#             idx ([type]): [description]
-
-#         Returns:
-#             [type]: [description]
-#         """
-#         # in eval mode, return data by order
-#         if not self.is_training:
-#             idx = self.in_metadata[idx][0]
-#             input_ids = self.positive_input_ids[idx][:self.test_M]
-#             attention_mask = self.positive_input_mask[idx][:self.test_M]
-#             token_type_ids = self.positive_token_type_ids[idx][:self.test_M] # it shows what are valid tokens
-#             # return self.input_ids[idx], self.attention_mask[idx]
-#             return [self._pad(t, self.test_M) for t in [input_ids, attention_mask, token_type_ids]]
-#         # randomly return data in training mode
-#         # NOTE: check in_metadata and out_metadata
-#         in_idx = np.random.choice(range(*self.in_metadata[idx]))
-#         out_idx = np.random.choice(range(*self.out_metadata[idx]))  # where the answer is 
-
-#         return self.input_ids[in_idx], self.attention_mask[in_idx], self.token_type_ids[in_idx], \
-#             self.start_positions[out_idx], self.end_positions[out_idx], self.answer_mask[out_idx]
 
 class QAGenDataset(Dataset):
     def __init__(self,

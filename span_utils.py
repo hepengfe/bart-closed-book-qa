@@ -7,9 +7,59 @@ import numpy as np
 import json
 import os
 import pickle # pickle is faster than json if the user doesn't need readability
-def preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages,
-               is_training, max_input_length, max_n_answers, encoded_path):
+
+
+def dump_pickle(input_data, answer_data, metadata, encoded_input_path, encoded_answer_path, metadata_path):
+    with open(encoded_input_path, "wb") as fp:
+        pickle.dump(input_data, fp)
+    with open(encoded_answer_path, "wb") as fp:
+        pickle.dump(answer_data, fp) 
+    with open(metadata_path, "wb") as fp:
+        pickle.dump(metadata, fp)
+
+
+def load_pickle(encoded_input_path, encoded_answer_path, metadata_path):
+    """ load encoded input data (concatenations of question and passages) and answer data from picle files 
+
+    Args:
+        encoded_input_path ([type]): [description]
+        encoded_answer_path ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
+    with open(encoded_input_path, "rb") as fp:
+        input_data = pickle.load(fp)
+    with open(encoded_answer_path, "rb") as fp:
+        answer_data = pickle.load(fp)
+    with open(metadata_path, "rb") as fp:
+        metadata = pickle.load(fp)
+    return input_data, answer_data, metadata
+
+
+def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path, logger,  tokenizer, max_input_length, max_n_answers=1, questions=None, answers=None, metadata=None, all_titles=None, all_passages=None,
+               is_training = True):
+    """
+
+
+    Args:
+        encoded_input_path ([type]): [description]
+        encoded_answer_path ([type]): [description]
+        tokenizer ([type]): [description]
+        max_input_length ([type]): [description]
+        max_n_answers ([type]): the top n answers kept 
+        questions ([type], optional): [description]. Defaults to None.
+        answers ([type], optional): [description]. Defaults to None.
+        metadata ([type], optional): [description]. Defaults to None.
+        all_titles ([type], optional): [description]. Defaults to None.
+        all_passages ([type], optional): [description]. Defaults to None.
+        is_training (bool, optional): [description]. Defaults to True.
+
+    Returns:
+        [type]: [description]
+    """
     '''
+
     Genereate a list of passage containing the answer.
 
     tokenizer: bertTokenizer
@@ -19,60 +69,48 @@ def preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages
     all_titles: a list of lists of k strings, each question has a list of string titles
     all_passages: a list of lists of k strings
     '''
-    assert len(questions)==len(all_titles)==len(all_passages)==len(metadata)
-
-    inputs = []
-    # import pdb
-    # pdb.set_trace()
-
-    print("Start concatenate question and passages")
-    for question, titles, passages in tqdm(zip(questions, all_titles, all_passages)):
-
-        concatenated_context = ""
-        for title, passage in zip(titles, passages):
-            if len(concatenated_context)>0:
-                concatenated_context += " [SEP] "
-            concatenated_context += title + " [SEP] " + passage
-        inputs.append((question, concatenated_context))
 
     
-    contained = []
-    for input, (s, e) in zip(inputs, metadata):
-        curr_answers = answers[s:e]
-        contained.append(any([answer.lower() in input[1].lower()
-                            for answer in curr_answers]))
-    print(np.mean(contained))
-    
-    encoded_input_path = encoded_path.replace(".json", "_input.p") # rewrite the json file to pickle file path
-    encoded_answer_path = encoded_path.replace(".json", "_answer.p")
+    if os.path.exists(encoded_input_path) and os.path.exists(encoded_answer_path) and os.path.exists(metadata_path):
+        input_data, answer_data, metadata = load_pickle(
+            encoded_input_path, encoded_answer_path, metadata_path)
 
-    if os.path.exists(encoded_input_path) and os.path.exists(encoded_answer_path):
-        with open(encoded_input_path, "rb") as fp:
-            input_data = pickle.load(fp)
-        with open(encoded_answer_path, "rb") as fp:
-            answer_data = pickle.load(fp)
-        # input_data = json.load(encoded_input_path)
-        # answer_data = json.load(encoded_answer_path)
-        # input_data = pickle.load()
         
     else:  # it also handles special case that there is no 
-        print("Not found encoded cache, now encoding QP concatenation ")
+        assert questions != None, "There doesn't exist encoded path, users should pass input data as argument into preprocess_span_input"
+        assert len(questions) == len(all_titles) == len(
+            all_passages) == len(metadata)
+        inputs = []
+        # import pdb
+        # pdb.set_trace()
+
+        for question, titles, passages in tqdm(zip(questions, all_titles, all_passages)):
+
+            concatenated_context = ""
+            for title, passage in zip(titles, passages):
+                if len(concatenated_context) > 0:
+                    concatenated_context += " [SEP] "
+                concatenated_context += title + " [SEP] " + passage
+            inputs.append((question, concatenated_context))
+
+        contained = []
+        for input, (s, e) in zip(inputs, metadata):
+            curr_answers = answers[s:e]
+            contained.append(any([answer.lower() in input[1].lower()
+                                for answer in curr_answers]))
+        logger.info(f"Top k passages contians {np.mean(contained)} answers")
+        logger.info("Not found encoded cache, now encoding QP concatenation ")
         # encoding is time consuming part, this version of transformer doesn't have BartTokenizerFast
         input_data = tokenizer.batch_encode_plus(inputs, padding="max_length", max_length=max_input_length,
-                                                truncation=True, return_attention_mask = True, return_token_type_ids = True)
-        answer_data = tokenizer.batch_encode_plus(answers)
-        with open(encoded_input_path, "wb") as fp:
-            # json.dump(input_data, fp)
-            pickle.dump(input_data, fp)
-        with open(encoded_answer_path, "wb") as fp:
-            # json.dump(answer_data, fp)
-            pickle.dump(answer_data, fp)
+                                                truncation=True, return_attention_mask = True, return_token_type_ids = True, verbose = True)
+        answer_data = tokenizer.batch_encode_plus(answers, verbose=True)
+        
+        dump_pickle(input_data, answer_data, metadata, encoded_input_path,
+                    encoded_answer_path, metadata_path)
+
     input_ids = input_data["input_ids"]
     attention_mask = input_data["attention_mask"]
     token_type_ids = input_data["token_type_ids"]
-    # import pdb
-    # pdb.set_trace()
-
 
     # as some of input ids will be skipped 
     new_input_ids = []
@@ -116,8 +154,9 @@ def preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages
                     detected_spans.append( (i, i+len(curr_input_ids)-1))
                     if len(detected_spans)==max_n_answers:
                         break
-        
-        if len(detected_spans) == 0:
+        # during training, we skip data entry with no detected span
+        # during inference stage, we still want to keep them for evaluation and all data should be included
+        if is_training and len(detected_spans) == 0:
             continue
         # TODO: uncomment the original code
         # if is_training and len(detected_spans)==0:
@@ -133,13 +172,9 @@ def preprocess(tokenizer, questions, answers, metadata, all_titles, all_passages
         start_positions.append([s[0] for s in detected_spans] + [0 for _ in range(max_n_answers-len(detected_spans))])
         end_positions.append([s[1] for s in detected_spans] + [0 for _ in range(max_n_answers-len(detected_spans))])
         answer_mask.append([1 for _ in detected_spans] + [0 for _ in range(max_n_answers-len(detected_spans))])
-
-    print("check answer coverage rate")
-
+    
 
     answer_coverage_rate = len(new_input_ids)/len(input_ids) # measure how often answers appear in passages
-    print("answer coverage rate by passages: ",
-          answer_coverage_rate, "    ", len(new_input_ids), "/", len(input_ids))
     return {"input_ids": new_input_ids, "attention_mask": new_attention_mask, "token_type_ids": new_token_type_ids,
             "start_positions": start_positions, "end_positions": end_positions, "answer_mask": answer_mask, "answer_coverage_rate": answer_coverage_rate}
 
@@ -160,10 +195,6 @@ def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_an
     assert len(start_logits)==len(end_logits)==len(input_ids)
 
     all_predictions = []
-    input_ids = input_ids.tolist()
-    # import pdb
-    # pdb.set_trace()
-    print("speed test breakpoint 1")
     # loop over all questions (curr_input)
     for curr_start_logits, curr_end_logits, curr_input_ids in \
             zip(start_logits, end_logits, input_ids):
@@ -180,10 +211,6 @@ def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_an
         for (i, s) in enumerate(curr_start_logits):
             for (j, e) in enumerate(curr_end_logits[i:i+max_answer_length]):
                 scores.append(((i, i+j), s+e))
-        # import pdb
-        # pdb.set_trace()
-        # print("sorting")
-        scores = [(score[0], score[1].item()) for score in scores]
         scores = sorted(scores, key=lambda x: x[1], reverse=True)
         # print("sorting finished")
         chosen_span_intervals = []
@@ -204,13 +231,9 @@ def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_an
                     prev_start_index<=start_index<=end_index<=prev_end_index
                     for (prev_start_index, prev_end_index) in chosen_span_intervals]):
                 continue
-            # import pdb
-            # pdb.set_trace()
             
             # input ids = batch sz x seq length
             # NOTE: I think the bug is because inputs have two answers. Just something causes it has different shape.
-            # import pdb
-            # pdb.set_trace()
             # print("check input ids and it should be a list of int")
             answer_text = tokenizer.decode(
                 curr_input_ids[offset+start_index:offset+end_index+1],
@@ -224,18 +247,8 @@ def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_an
                 break
         # a list of dictionary
         all_predictions.append(nbest)
-    # pdb.set_trace()
-    print("speed test breakpoint 2")
 
-    # import pdb
     text_predictions = []
-
-    if len(all_predictions) == len(input_ids):
-        pass
-    else:
-        import pdb
-        pdb.set_trace()
-
     for preds in all_predictions:
         text_predictions.append([ pred['text'] for pred in preds ])
     return text_predictions

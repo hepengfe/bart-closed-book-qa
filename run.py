@@ -5,19 +5,19 @@ import numpy as np
 import torch
 import json
 
-from transformers import BartTokenizer, BartConfig, T5Tokenizer, T5Config, BertConfig, BertTokenizer
+from transformers import BartTokenizer, BartConfig, T5Tokenizer, T5Config, BertConfig, BertTokenizer # , ElectraTokenizer, ElectraForQuestionAnswering
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 from data import QAData
 from bart import MyBart, MyBartForCondGen
 from T5 import MyT5
 
+
 # TODO 1: ELECTRA
 # TODO 2: 
 
 
 def run(args, logger):
-
     if args.predict_type.lower() == "spanseqgen":
         if args.model.lower() == "bart":
             tokenizer = BartTokenizer.from_pretrained("bart-large")
@@ -31,7 +31,10 @@ def run(args, logger):
     elif args.predict_type.lower() == "spanextraction":
         if args.model.lower() == "bert":
             tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+        elif args.model.lower() == "electra":
 
+            tokenizer = ElectraTokenizer.from_pretrained('google/electra-small-generator')
+        
         else:
             logger.warn(
                 "Please specify correct model for span extraction. e.g. bert")
@@ -45,7 +48,7 @@ def run(args, logger):
             for l in range(600, 800, 50):
                 print("Evaluate passage coverage for top ", k,
                       "passages for max input sequence length ", l)
-                args.top_k = k
+                args.top_k_passages = k
                 args.max_input_length = l
                 train_data = QAData(logger, args, args.train_file, "train")
                 dev_data = QAData(logger, args, args.predict_file, "dev")
@@ -62,12 +65,11 @@ def run(args, logger):
     else:
         train_data = QAData(logger, args, args.train_file, "train")
         dev_data = QAData(logger, args, args.predict_file, "dev")
-
-        print("Pre-process training data")
+        logger.info("Start loading training data")
         train_data.load_dataset(tokenizer)
         train_data.load_dataloader()
 
-        print("Pre-process development data")
+        logger.info("Start loading dev data")
         dev_data.load_dataset(tokenizer)
         dev_data.load_dataloader()
     if args.do_train:
@@ -80,9 +82,16 @@ def run(args, logger):
                 return {_convert(key): value for key, value in state_dict.items()}
             if args.model.lower() == "bart":
                 # TODO: add flag that when there is more specialized token,
+                # NOTE: it serves a template to 
+                config = BartConfig.from_pretrained("bart-large")
+                logger.warn("Due to the previously added token, here I manually add one on config vocab size")
+                config.vocab_size += 1 
 
-                model = MyBart.from_pretrained(
-                    "bart-large",  state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+
+
+                # the other way is to save a bart-large file with resize token size 
+                model = MyBart.from_pretrained(None,
+                    state_dict=convert_to_single_gpu(torch.load(args.checkpoint)), config = config)
 
                 # model = MyBart.from_pretrained("bart-large",
                 #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
@@ -91,8 +100,13 @@ def run(args, logger):
 
             elif args.model.lower() == "t5":
                 # model = MyT5.from_pretrained('t5-large')
-                model = MyT5.from_pretrained('t5-base')
+                model = MyT5.from_pretrained('t5-base', state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+
+            elif args.model.lower() == "bert":
+                model = SpanPredictor.from_pretrained(
+                    "bert-base-uncased", state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
             else:
+
                 print("wrong model argument")
                 exit()
 
@@ -124,13 +138,18 @@ def run(args, logger):
             # span extraction
             elif args.predict_type.lower() == "spanextraction":
                 logger.info("Bert model enabled for span predictions")
-                if args.model.lower() != "bert":
-                    logger.warn(
-                        f"Correct span extraction model from {args.model} to bert")
+                
                 # TODO: add more variants span extraction pre-trained model
-                config = BertConfig.from_pretrained("bert-base-uncased")
-                model = SpanPredictor.from_pretrained(
-                    "bert-base-uncased", config=config)
+                if args.model.lower() == "bert":
+                    config = BertConfig.from_pretrained("bert-base-uncased")
+                    model = SpanPredictor.from_pretrained(
+                        "bert-base-uncased", config=config)
+                elif args.model.lower() == "electra":
+                    model = ElectraForQuestionAnswering.from_pretrained(
+                        'google/electra-small-discriminator')
+                else:
+                    logger.warn("Wrong model argument")
+                    exit()
             if args.device == "cuda" and torch.cuda.device_count() > 1:
                 if args.n_gpu == 1:
                     logger.warning("User specified one gpu but there are actually {}, it has been corrected".format(
@@ -171,7 +190,7 @@ def run(args, logger):
         # elif torch.cuda.is_available():
         #     model.to(torch.device("cuda"))
         model.eval()
-        ems = inference(model, dev_data, args.predict_type,
+        ems = inference(args, model, dev_data, args.predict_type,
                         device=args.device, save_predictions=True)
         logger.info("%s on %s data: %.2f" %
                     (dev_data.metric, dev_data.data_type, np.mean(ems)*100))
@@ -187,13 +206,23 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
     stop_training = False
 
     # reload some training status if
+    
     if args.checkpoint is not None:
-        with open(os.path.join(args.output_dir, 'checkpoint_stat.json'), "r") as fp:
-            checkpoint_stat = json.load(fp)
+        if args.fine_tune:
+            logger.info("Load previous model and start fine tuning on ambig dataset")
+        else:
+            logger.info("Not continue fine tuning on Ambig, loading previous checkpoint stat and model")
+            with open(os.path.join(args.output_dir, 'checkpoint_stat.json'), "r") as fp:
+                checkpoint_stat = json.load(fp)
 
-        args.start_epoch = checkpoint_stat["best_epoch"]
-        best_accuracy = checkpoint_stat["best_em_accuracy"]
-        global_step = checkpoint_stat["global_step"]
+            start_epoch = checkpoint_stat["best_epoch"] 
+            best_accuracy = checkpoint_stat["best_em_accuracy"]
+            global_step = checkpoint_stat["global_step"] + args.eval_peroid
+            logger.info(f"load checkpoint model successfully")
+            logger.info(
+                f"previous best model achieved {best_accuracy} at global_step {global_step} and epoch {start_epoch} ")
+            # new start global step 
+            global_step += args.eval_period
 
     checkpoint_stat = dict()
     logger.info("Starting training!")
@@ -234,7 +263,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 # import pdb
                 # pdb.set_trace()
 
-                curr_em = inference(model if args.n_gpu == 1 else model.module, dev_data,
+                curr_em = inference(args, model if args.n_gpu == 1 else model.module, dev_data,
                                     args.predict_type, device=args.device, save_predictions=True)
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
                     global_step,
@@ -273,7 +302,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
             break
 
 
-def inference(model, dev_data, predict_type, device="cuda", save_predictions=False):
+def inference(args, model, dev_data, predict_type, device="cuda", save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
 
@@ -305,10 +334,14 @@ def inference(model, dev_data, predict_type, device="cuda", save_predictions=Fal
         # import pdb
         # pdb.set_trace()
         # print("enable interactive mode and test code of evaluating span extraction")
+        all_start_logits = []
+
+        all_end_logits = []
+        all_input_data = []
+
         for i, batch in enumerate(dev_data.dataloader):
             if torch.cuda.is_available():
                 batch = [b.to(device) for b in batch]
-            print("inference span in batch ", i)
             start_logits, end_logits = model(input_ids=batch[0], attention_mask=batch[1],
                                              token_type_ids=batch[2], inputs_embeds=None,
                                              start_positions=batch[3], end_positions=batch[4], answer_mask=batch[5],
@@ -317,32 +350,40 @@ def inference(model, dev_data, predict_type, device="cuda", save_predictions=Fal
             # overwrite bert generate function
 
             # TODO: add these arguments later
-            top_k_answers = 5
-            max_answer_length = 10
-            text_predictions = decode(start_logits, end_logits, batch[0],
-                                      dev_data.tokenizer, top_k_answers, max_answer_length)
+            start_logits = start_logits.detach().cpu().numpy().tolist()
+            end_logits = end_logits.detach().cpu().numpy().tolist()
+            input_ids = batch[0].detach().cpu().numpy().tolist()
+            all_input_data += input_ids
+            all_start_logits += start_logits
+            all_end_logits += end_logits
+            
 
-            # TODO: if it's logits then use decode function in span utils
-            # import pdb
-            # pdb.set_trace()
-            # print("test text predictions")
-            for input_, pred in zip(batch[0], text_predictions):
-                # import pdb
-                # pdb.set_trace()
-                # print("expect pred to be a list of tokens")
-                # pred = dev_data.decode(output)
-                predictions.append(pred)
-            print("predictions size / input size ",
-                  len(predictions), "/ ", len(batch[0])*(i+1))
-            if len(predictions) != len(batch[0])*(i+1):
-                import pdb
-                pdb.set_trace()
+            # for (curr_input_data, curr_start_logits, curr_end_logits) in zip(input_ids, start_logits, end_logits):
+            #     predictions.append(decode(curr_start_logits, curr_end_logits, curr_input_data, dev_data.tokenizer, top_k_answers, max_answer_length))
+
+            # text_predictions = decode(start_logits, end_logits, input_ids,
+            #                           dev_data.tokenizer, top_k_answers, max_answer_length)
+
+
+
+            # # TODO: if it's logits then use decode function in span utils
+            # # import pdb
+            # # pdb.set_trace()
+            # # print("test text predictions")
+            # for input_, pred in zip(batch[0], text_predictions):
+            #     # import pdb
+            #     # pdb.set_trace()
+            #     # print("expect pred to be a list of tokens")
+            #     # pred = dev_data.decode(output)
+            #     predictions.append(pred)
+            # print("predictions size / input size ",
+            #       len(predictions), "/ ", len(batch[0])*(i+1))
+
     # NOTE: in the decoding module, the input batch size matches the predictions size 
-    # therefore, it could be something wrong with the dataloader
-    # import pdb
-    # pdb.set_trace()
-    # print("check dev data length")
-    # predictions here are all dev data's predictions
+    assert len(all_start_logits) == len(all_end_logits) == len(all_input_data) == len(dev_data)
+    predictions = decode(all_start_logits, all_end_logits, all_input_data, dev_data.tokenizer,
+                         args.top_k_answers, max_answer_length=args.max_answer_length)
+
     if save_predictions:
         dev_data.save_predictions(predictions)
     return np.mean(dev_data.evaluate(predictions))
