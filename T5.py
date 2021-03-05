@@ -1,8 +1,8 @@
 from transformers import T5ForConditionalGeneration
 
 # from transformers.modeling_outputs import Seq2SeqLMOutput
-from transformers.modeling_bart import shift_tokens_right
-from transformers.modeling_t5 import T5PreTrainedModel, T5Stack
+from transformers.models.bart.modeling_bart import shift_tokens_right
+from transformers.models.t5.modeling_t5 import T5PreTrainedModel, T5Stack
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -285,7 +285,7 @@ class T5StackCP(T5Stack):
             return decoder_outputs + encoder_outputs
 class MyT5(T5ForConditionalGeneration):
     def __init__(self, config):
-        super().__init__(config)
+        super(MyT5, self).__init__(config)
 
         self.gradient_cp = False
 
@@ -317,6 +317,7 @@ class MyT5(T5ForConditionalGeneration):
                 decoder_input_ids=None,
                 decoder_attention_mask=None,
                 decoder_past_key_value_states=None,
+                past_key_values=None, head_mask = None,  return_dict=None, output_attentions=None, output_hidden_states=None,
                 use_cache=False,
                 is_training = False):
 
@@ -341,15 +342,55 @@ class MyT5(T5ForConditionalGeneration):
                 use_cache=use_cache
             )
         else:
-            import pdb
-            pdb.set_trace()
             # mimic code before BartModel forward
             if is_training:
                 # lm_labels = decoder_input_ids.clone() 
-                decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
+                _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id, self.config.decoder_start_token_id)
             else:
-                decoder_input_ids = decoder_input_ids
+                _decoder_input_ids = decoder_input_ids
+            
 
+            # File "/home/murphy/anaconda3/envs/cbQA433/lib/python3.6/site-packages/transformers/models/t5/modeling_t5.py", line 1525, in forward
+            #     assert labels is None, "Decoder should not use cached key value states when training."
+            # AssertionError: Decoder should not use cached key value states when training.
+            if past_key_values is not None:
+                decoder_input_ids = None
+
+
+        # NOTE: not sure if these  variables are needed
+        # head_mask=None,
+        # decoder_head_mask=None,
+        # inputs_embeds=None,
+        # decoder_inputs_embeds=None,
+        # output_attentions=None,
+        # output_hidden_states=None,
+        # return_dict=None,
+             
+            outputs = super(MyT5, self).forward(
+                input_ids,
+                attention_mask=attention_mask,
+                encoder_outputs=encoder_outputs,
+                decoder_input_ids=_decoder_input_ids,
+                decoder_attention_mask=decoder_attention_mask,
+                past_key_values= past_key_values, 
+                # decoder_cached_states=decoder_cached_states,  
+                head_mask = head_mask,  
+                labels = decoder_input_ids,   # NOTE: it might causes bug which return different value 
+                return_dict=True,
+                use_cache=use_cache,  
+            ) # as the current forward function overwriting the parent function, so we have to use suepr()
+            # import pdb;pdb.set_trace()
+            # T5 doesn't have bias = self.final_logits_bias
+            # lm_logits = F.linear(outputs[0], self.shared.weight) # bias=self.final_logits_bias)
+            # loss, lm_logits, _ = outputs 
+            # output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
+            # return ((loss,) + output) if loss is not None else output
+            if is_training:
+                # loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
+                # loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
+                #                 decoder_input_ids.view(-1))
+                return outputs.loss
+            return outputs
 
 
 
@@ -406,8 +447,6 @@ class MyT5(T5ForConditionalGeneration):
             # insert decoder past at right place
             # to speed up decoding
             if use_cache is True:
-                # import pdb
-                # pdb.set_trace()
                 past = ((encoder_outputs, decoder_outputs[1]),)
                 decoder_outputs = decoder_outputs[:1] + past + decoder_outputs[2:]
 

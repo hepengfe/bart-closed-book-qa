@@ -13,145 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-train_bs=64
-test_bs=64
-python cli.py \
-        --model t5 \
-        --do_train --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --append_another_bos \
-        --device cuda
-
-
-
-test----------------------------------------
-train_bs=1
-test_bs=1
-CUDA_VISIBLE_DEVICES=1 python cli.py \
-        --model t5 \
-        --do_train --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --append_another_bos \
-        --device 0 \
-        --gradient_cp True
-
-test2-------------------------------------
-train_bs=2
-test_bs=2
-python cli.py \
-        --model bart \
-        --do_train --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --append_another_bos \
-        --device cuda \
-        --gradient_cp True
-
-
-
-
-
-bart continue training-------------------
-train_bs=130
-test_bs=130
-python cli.py
-        --do_train --output_dir out/nq-bart-closed-qa \
-        --model bart\
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --append_another_bos \
-        --checkpoint out/nq-bart-closed-qa/best-model.pt \
-        --device cuda \
-        --gradient_cp False
-
-t5 training-----------------------------------
-# train_bs=180
-# test_bs=180
-# python cli.py \
-#         --model t5 \
-#         --do_train --output_dir out/nq-t5-closed-qa \
-#         --train_file data/nqopen-train.json \
-#         --predict_file data/nqopen-dev.json \
-#         --train_batch_size ${train_bs} \
-#         --predict_batch_size ${test_bs} \
-#         --append_another_bos \
-#         --device cuda \
-#         --gradient_cp False
-
-
-train_bs=180
-test_bs=180
-CUDA_VIDIABLE_DEVICES=0  python cli.py \
-        --model t5 \
-        --do_train --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --device cuda \
-        --gradient_cp False \
-        --eval_period 1
-
-
-
-
---------------------To reproduce T5 bug
-train_bs=250
-test_bs=250
-python cli.py \
-        --model t5 \
-        --do_train --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --device 0 \
-        --gradient_cp False \
-        --eval_period 1000 
-
-
---------------------To generate text
-train_bs=150
-test_bs=150
-python cli.py \
-        --model bart \
-        --do_train --output_dir out/nq-bart-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --device 0 \
-        --gradient_cp False \
-        --eval_period 1000 
-
-
-----------------------debug what slows down the process in topKPassages
-train_bs=150
-test_bs=150
-python cli.py \
-        --model bart \
-        --do_train --output_dir out/nq-bart-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanSeqGen \
-        --device 0 \
-        --gradient_cp False \
-        --max_input_length 1024 \
-        --top_k 1 \
-        --eval_period 1000 
-
 
 ------- tokenization without training
 python cli.py \
@@ -169,136 +30,42 @@ python cli.py \
         --eval_period 1000 
 
 
------------ train bart
-python cli.py \
+----------- train bart   (updated)
+CUDA_VISIBLE_DEVICES=1,0 python cli.py \
         --model bart \
         --do_train --output_dir out/nq-bart-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanSeqGen \
-        --device 0 \
-        --gradient_cp False \
-        --max_input_length 750 \
-        --top_k 5 \
-        --eval_period 1000 
-
------------ train T5
-python cli.py \
-        --model t5 \
-        --do_train --output_dir out/nq-t5-closed-qa \
-        --train_file data/nqopen-train.json \
-        --predict_file data/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanSeqGen \
-        --device 0 \
-        --gradient_cp False \
-        --max_input_length 750 \
-        --top_k 5 \
-        --eval_period 1000 
-
--------- bart with dataset aimbig 
-python cli.py \
-        --model bart \
-        --do_train --output_dir out/ambig-bart-closed-qa \
-        --train_file data/ambigqa/ambigqa_train.json \
-        --predict_file data/ambigqa/ambigqa_dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanSeqGen \
-        --device 0 \
-        --gradient_cp False \
-        --max_input_length 750 \
-        --top_k 5 \
-        --eval_period 1
----------- span extract
-python cli.py \
-        --model bert \
-        --do_train --output_dir out/np-bert-closed-qa \
-        --train_file  data/nqopen/nqopen-train.json  \
+        --train_file data/nqopen/nqopen-train.json \
         --predict_file data/nqopen/nqopen-dev.json \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
-        --predict_type  SpanExtraction \
-        --device 0 \
-        --gradient_cp False \
-        --max_input_length 1024 \
-        --top_k 5 \
-        --eval_period 1 \
+        --predict_type  SpanSeqGen \
+        --device cuda \
+        --max_input_length 750 \
+        --top_k_passages 5 \
+        --eval_period 1000 \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv \
-        --debug
------------
-python cli.py \
-        --model bert \
-        --do_train --output_dir out/np-bert-closed-qa \
-        --train_file  data/nqopen/nqopen-train.json  \
+        --verbose
+----------- train T5 (updated)
+ python cli.py \
+        --model t5 \
+        --do_train --output_dir out/nq-t5-closed-qa \
+        --train_file data/nqopen/nqopen-train.json \
         --predict_file data/nqopen/nqopen-dev.json \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
-        --predict_type  SpanExtraction \
-        --device 0 \
-        --gradient_cp False \
-        --max_input_length 512 \
-        --top_k 5 \
-        --eval_period 1 \
-        --ranking_folder_path data/reranking_results/nqopen \
-        --data_folder_path data/nqopen \
-        --passages_path data/wiki/psgs_w100.tsv
----------
-python cli.py \
-        --model bert \
-        --do_train --output_dir out/np-bert-closed-qa \
-        --train_file  data/nqopen/nqopen-train.json  \
-        --predict_file data/nqopen/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanExtraction \
-        --device cpu \
-        --gradient_cp False \
+        --predict_type  SpanSeqGen \
+        --device cuda \
+        --gradient_cp  \
         --max_input_length 750 \
-        --top_k 5 \
-        --eval_period 1 \
-        --ranking_folder_path data/reranking_results/nqopen \
-        --data_folder_path data/nqopen \
-        --passages_path data/wiki/psgs_w100.tsv
----------
-python cli.py \
-        --model bert \
-        --do_train --output_dir out/np-bert-closed-qa \
-        --train_file  data/nqopen/nqopen-train.json  \
-        --predict_file data/nqopen/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanExtraction \
-        --device 0 \
-        --gradient_cp False \
-        --max_input_length 256 \
         --top_k_passages 5 \
-        --eval_period 1 \
+        --eval_period 1000 \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
-        --passages_path data/wiki/psgs_w100.tsv 
-------- eval_period = 100, train
-python cli.py \
-        --model bert \
-        --do_train --output_dir out/np-bert-closed-qa \
-        --train_file  data/nqopen/nqopen-train.json  \
-        --predict_file data/nqopen/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanExtraction \
-        --device 0 \
-        --gradient_cp False \
-        --max_input_length 256 \
-        --top_k_passages 5 \
-        --eval_period 100 \
-        --ranking_folder_path data/reranking_results/nqopen \
-        --data_folder_path data/nqopen \
-        --passages_path data/wiki/psgs_w100.tsv
+        --passages_path data/wiki/psgs_w100.tsv  \
+        --checkpoint out/nq-t5-closed-qa \
+        --verbose
 --------- eval  (predict)
 python cli.py \
         --model bert \
@@ -315,8 +82,8 @@ python cli.py \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv
------------- bert training
-python cli.py \
+------------ bert training (updated) train_bs=300
+CUDA_VISIBLE_DEVICES=1 python cli.py \
         --model bert \
         --do_train --output_dir out/nq-bert-closed-qa \
         --train_file  data/nqopen/nqopen-train.json  \
@@ -324,32 +91,32 @@ python cli.py \
         --train_batch_size ${train_bs} \
         --predict_batch_size ${test_bs} \
         --predict_type  SpanExtraction \
+        --device cuda \
+        --max_input_length 512 \
+        --top_k_passages 5 \
+        --eval_period 100 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv \
+        --verbose
+
+-------------- ELECTRA
+python cli.py \
+        --model electra \
+        --do_train --output_dir out/nq-electra-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
         --device 0 \
-        --gradient_cp False \
+        --gradient_cp \
         --max_input_length 512 \
         --top_k_passages 5 \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
-        --passages_path data/wiki/psgs_w100.tsv
-
-
-
-# ---------- span extraction on disambig (not asked)
-# python cli.py \
-#         --model bert \
-#         --do_train --output_dir out/ambigqa-bert-closed-qa \
-#         --train_file  data/ambigqa/ambigqa_train.json  \
-#         --predict_file data/ambigqa/ambigqa_dev.json \
-#         --train_batch_size ${train_bs} \
-#         --predict_batch_size ${test_bs} \
-#         --predict_type  SpanExtraction \
-#         --device 0 \
-#         --gradient_cp False \
-#         --max_input_length 256 \
-#         --top_k_passages 5 \
-#         --ranking_folder_path data/reranking_results/ambigqa \
-#         --data_folder_path data/ambigqa \
-#         --passages_path data/wiki/psgs_w100.tsv
+        --passages_path data/wiki/psgs_w100.tsv\
+        --verbose
 
 -------- Continue training Bart from model trained on NQ, also it uses wiki 2020
 # previous argument train_bs=12 test_bs=12
@@ -363,7 +130,7 @@ CUDA_VISIBLE_DEVICES=1 python cli.py \
         --predict_batch_size ${test_bs} \
         --predict_type  SpanSeqGen \
         --device 0 \
-        --gradient_cp False \
+        --gradient_cp  \
         --max_input_length 750 \
         --top_k_passages 5 \
         --top_k_answers 5 \
@@ -456,10 +223,11 @@ def main():
                         help="Use a subset of data for debugging")
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
+    parser.add_argument("--model_parallel", type=bool, default=True)
     parser.add_argument('--device', type=str, default="cuda",
                         help="Can be set to cpu or cuda or device number")
     parser.add_argument('--n_gpu', type=int, default=0)
-    parser.add_argument('--gradient_cp', type=bool, default=False)
+    parser.add_argument('--gradient_cp',  default=False, action="store_true")
 
     # parameters for SpanSeqGen
     parser.add_argument("--top_k_passages", default=10, type=int)

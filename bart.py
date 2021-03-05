@@ -1,7 +1,7 @@
 from transformers import T5ForConditionalGeneration, BartForConditionalGeneration
 
 # from transformers.modeling_outputs import Seq2SeqLMOutput
-from transformers.modeling_bart import shift_tokens_right, _prepare_bart_decoder_inputs, BartEncoder, EncoderLayer, BartModel, invert_mask
+from transformers.models.bart.modeling_bart import shift_tokens_right, BartEncoder, BartEncoderLayer, BartModel # _prepare_bart_decoder_inputs,
 import random
 import torch
 import torch.nn.functional as F
@@ -9,9 +9,26 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 from torch.utils.checkpoint import checkpoint
 from typing import Dict, List, Optional, Tuple
+
+
+
+
+def invert_mask(attention_mask):
+    """Not avaiable in huggingface 4.3.3. So I pasted it here. 
+
+    Args:
+        attention_mask ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
+    assert attention_mask.dim() == 2
+    return attention_mask.eq(0)
+
 class MyBart(BartForConditionalGeneration):
     def forward(self, input_ids, attention_mask=None, encoder_outputs=None,
-                decoder_input_ids=None, decoder_attention_mask=None, decoder_cached_states=None,
+                decoder_input_ids=None, decoder_attention_mask=None, decoder_cached_states=None, 
+                past_key_values=None, head_mask = None,  return_dict=None, output_attentions=None, output_hidden_states=None,
                 use_cache=False, is_training=False):
         """
         Return loss for training mode and return outputs for evaluation mode
@@ -26,38 +43,54 @@ class MyBart(BartForConditionalGeneration):
         :return:
         """
         if is_training:
-            _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
+            # don't know why but merge the code from transfromer 2.9
+            index_of_eos = (input_ids.ne(self.config.pad_token_id).sum(dim=1) - 1).unsqueeze(-1)
+            decoder_start_token_id = decoder_input_ids[:, 0] = input_ids.gather(1, index_of_eos).squeeze()
+            # _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id, decoder_start_token_id)
+            _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id, self.config.decoder_start_token_id)
         else:
             _decoder_input_ids = decoder_input_ids
-
-        outputs = self.model(
+        # if past_key_values is not None:
+        #     decoder_input_ids = None
+        outputs = super(MyBart, self).forward(
             input_ids,
             attention_mask=attention_mask,
             encoder_outputs=encoder_outputs,
             decoder_input_ids=_decoder_input_ids,
             decoder_attention_mask=decoder_attention_mask,
-            decoder_cached_states=decoder_cached_states,
-            use_cache=use_cache,
+            # decoder_cached_states=decoder_cached_states,   # no longer in 4.3.3
+            past_key_values=past_key_values, 
+            head_mask = head_mask, 
+            labels = decoder_input_ids,  # NOTE: it might causes bug which return different value 
+            return_dict=True,
+            use_cache=use_cache, 
         )
+        # outputs = self.model(
+        #     input_ids,
+        #     attention_mask=attention_mask,
+        #     encoder_outputs=encoder_outputs,
+        #     decoder_input_ids=_decoder_input_ids,
+        #     decoder_attention_mask=decoder_attention_mask,
+        #     # decoder_cached_states=decoder_cached_states,   # no longer in 4.3.3
+        #     past_key_values=past_key_values, 
+        #     head_mask = head_mask, 
+        #     return_dict=return_dict,
+        #     use_cache=use_cache,
+        # )
 
-        lm_logits = F.linear(outputs[0], self.model.shared.weight, bias=self.final_logits_bias)
+        # NOTE: not sure if it's the same as function
+        # lm_logits = F.linear(outputs[0], self.model.shared.weight, bias=self.final_logits_bias)
 
         if is_training:
-            loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
-            loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
-                            decoder_input_ids.view(-1))
-            return loss
-        return (lm_logits, ) + outputs[1:]
+            # loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
+            # loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
+                            # decoder_input_ids.view(-1))
+            return outputs.loss
+        return outputs
 
 
 
 # implement an encoder layer with hidden states as input arguments
-
-# class CPEnderLayer(EncoderLayer):
-
-
-
-
 
 
 class CPBartEncoder(BartEncoder):
@@ -87,7 +120,7 @@ class CPBartEncoder(BartEncoder):
     # class BartEncoder(nn.Module):
     #     """
     #     Transformer encoder consisting of *config.encoder_layers* self attention layers. Each layer
-    #     is a :class:`EncoderLayer`.
+    #     is a :class:`BartEncoderLayer`.
     #
     #     Args:
     #         config: BartConfig
@@ -115,7 +148,7 @@ class CPBartEncoder(BartEncoder):
     #             self.embed_positions = LearnedPositionalEmbedding(
     #                 config.max_position_embeddings, embed_dim, self.padding_idx,
     #             )
-    #         self.layers = nn.ModuleList([EncoderLayer(config) for _ in range(config.encoder_layers)])
+    #         self.layers = nn.ModuleList([BartEncoderLayer(config) for _ in range(config.encoder_layers)])
     #         self.layernorm_embedding = LayerNorm(embed_dim) if config.normalize_embedding else nn.Identity()
     #         # mbart has one extra layer_norm
     #         self.layer_norm = LayerNorm(config.d_model) if config.normalize_before else None
@@ -268,17 +301,3 @@ class MyBartModel(BartModel):
             assert isinstance(decoder_outputs[0], torch.Tensor)
             encoder_outputs: Tuple = _filter_out_falsey_values(encoder_outputs)
             return decoder_outputs + encoder_outputs
-
-class MyBartForCondGen(BartForConditionalGeneration):
-    def __init__(self, config):
-        """
-        Initialize My BartForConditionalGeneration model with argument to enable gradient checkpoint
-        :param config:
-        """
-        super(MyBartForCondGen, self).__init__(config)
-
-        gradient_cp = False
-
-
-        self.model = MyBartModel(config, gradient_cp) # reintialize base model
-

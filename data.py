@@ -39,7 +39,8 @@ class QAData(object):
         if type(self.data)==dict:
             self.data = self.data["data"]
         if args.debug:
-            self.data = self.data[:1000]
+            logger.warn("[debug mode] Load all dev data")
+            self.data = self.data
 
         assert type(self.data)==list
         assert all(["id" in d for d in self.data]), self.data[0].keys()
@@ -75,8 +76,8 @@ class QAData(object):
         self.dataloader = None
         self.cache = None
         self.debug = args.debug
-        self.answer_type = "span" if "Extraction" in args.predict_type.lower() else "seq" # TODO: condition on args.predict_type
-        logger.info(f"answer type is {self.answer_type}")
+        self.answer_type = "span" if "extraction" in args.predict_type.lower() else "seq" # TODO: condition on args.predict_type
+        
         self.dataset_type = None
         self.passages = None
         
@@ -162,7 +163,7 @@ class QAData(object):
         # 3. if not, preprocess(load passages and encode) from scratch
 
         if self.load and self.cache:
-            self.logger.info(logging_prefix + "Found pickle cache, start loading...")
+            self.logger.info(logging_prefix + f"Found pickle cache, start loading {encoded_input_path}")
             if self.answer_type == "seq":
                 # so we load encoding (it's batch + dictionary) and then pass then into 
 
@@ -189,7 +190,7 @@ class QAData(object):
                 # Q: input  (QA concatenation, y= answer?)
                 # label is the start and end positions
                 answer_coverage_rate = d["answer_coverage_rate"]
-                self.logger.info(f"answer coverage rate by passages: {answer_coverage_rate}")
+                self.logger.info(logging_prefix + f"answer coverage rate by passages: {answer_coverage_rate}")
             else:
                 self.logger.warn("wrong answer type")
                 exit()
@@ -245,10 +246,6 @@ class QAData(object):
                     self.logger.warn(
                         f"wrong dataset type: {self.dataset_type}")
                     exit()
-                # add a length check
-                if self.debug:
-                    questions = questions
-                    answers = answers
                 
                 answers, metadata = self.flatten(answers)
                 
