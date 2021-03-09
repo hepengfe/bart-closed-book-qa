@@ -32,15 +32,22 @@ class QAData(object):
             NotImplementedError: [description]
         """
         self.data_path = data_path
+        self.is_training = dataset_type == "train"  # determine is_training status now as dataset_type might be modfied later for file accessing
         if args.debug:
             self.data_path = data_path.replace("train", "dev")
+            dataset_type_for_file_accessing = "dev"
+        else:
+            dataset_type_for_file_accessing = dataset_type 
+        # NOTE: self.data is the original data. Not tokenized nor encoded.
         with open(self.data_path, "r") as f:
             self.data = json.load(f)  # format example: [ {'id': '-8178292525996414464', 'question': 'big little lies season 2 how many episodes', 'answer': ['seven']}, ..... ]
         if type(self.data)==dict:
             self.data = self.data["data"]
-        if args.debug:
-            logger.warn("[debug mode] Load all dev data")
-            self.data = self.data
+        if args.debug and self.is_training == False:
+            logger.warn("[DEBUG MODE] Load all dev data")
+            self.data = self.data[:]
+            # logger.warn("[DEBUG MODE] Load partial dev data")
+            # self.data = self.data[:500]
 
         assert type(self.data)==list
         assert all(["id" in d for d in self.data]), self.data[0].keys()
@@ -53,7 +60,7 @@ class QAData(object):
         self.index2id = {i:d["id"] for i, d in enumerate(self.data)}
         self.id2index = {d["id"]:i for i, d in enumerate(self.data)}
 
-        self.is_training = dataset_type == "train"
+        
 
         # TODO: correct it back
         self.load = True  # debug mode also needs load 
@@ -78,7 +85,7 @@ class QAData(object):
         self.debug = args.debug
         self.answer_type = "span" if "extraction" in args.predict_type.lower() else "seq" # TODO: condition on args.predict_type
         
-        self.dataset_type = None
+        self.dataset_name = None
         self.passages = None
         
         # idea of naming detection is finding the folder name
@@ -89,7 +96,7 @@ class QAData(object):
                  "data folder path/ranking_folder_path is wrong"
             assert any(n in self.data_path for n in ["nq", "nqopen"]) == True,\
                  "data path/ranking_folder_path is wrong"
-            self.dataset_type = "nq"
+            self.dataset_name = "nq"
         elif any([n in args.ranking_folder_path for n in ["ambigqa"]]):
             ranking_file_name = "ambigqa_"
             data_file_n = "ambigqa_"  # NOTE: it's for light data only
@@ -97,15 +104,15 @@ class QAData(object):
                 "data folder path/ranking_folder_path is wrong"
             assert "ambigqa" in self.data_path,\
                 "data path/ranking_folder_path is wrong"
-            self.dataset_type = "ambig"
+            self.dataset_name = "ambig"
         else:
             self.logger.warn("args.ranking_folder_path: ", args.ranking_folder_path)
             exit()
         self.wiki_passage_path = args.passages_path
         self.ranking_path = os.path.join(
-            args.ranking_folder_path, f"{ranking_file_name}{dataset_type}.json")
+            args.ranking_folder_path, f"{ranking_file_name}{dataset_type_for_file_accessing}.json")
         self.data_path = os.path.join(
-            args.data_folder_path, f"{data_file_n}{dataset_type}.json")
+            args.data_folder_path, f"{data_file_n}{dataset_type_for_file_accessing}.json")
         self.top_k_passages = args.top_k_passages
 
         
@@ -128,7 +135,7 @@ class QAData(object):
         return new_answers, metadata
 
     def load_dataset(self, tokenizer, do_return=False):
-        logging_prefix = f"[{self.data_type} data]   "
+        logging_prefix = f"[{self.data_type} data]\t".upper()
         self.tokenizer = tokenizer
 
         # NOTE:  Might have bug here 
@@ -191,6 +198,7 @@ class QAData(object):
                 # label is the start and end positions
                 answer_coverage_rate = d["answer_coverage_rate"]
                 self.logger.info(logging_prefix + f"answer coverage rate by passages: {answer_coverage_rate}")
+                 
             else:
                 self.logger.warn("wrong answer type")
                 exit()
@@ -207,6 +215,7 @@ class QAData(object):
                     elif self.answer_type == "span":
                         input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask, passage_coverage_rate = json.load(
                             f)
+                        
                     else:
                         self.logger.warn(logging_prefix + "Unrecognizable answer type")
                         exit()   
@@ -219,7 +228,8 @@ class QAData(object):
                     self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path)
                 questions = [d["question"] if d["question"].endswith("?") else d["question"]+"?"
                             for d in self.data]
-                if self.dataset_type == "ambig":
+                # NOTE: this code is untested yet
+                if self.dataset_name == "ambig":
                     answers = []
                     for d in self.data:
                         cur_answer = []
@@ -240,11 +250,11 @@ class QAData(object):
                         answers.append(cur_answer) # for one question, there is one list of answers
                         # import pdb; pdb.set_trace()
                         # print("check cur_answer")
-                elif self.dataset_type == "nq":
+                elif self.dataset_name == "nq":
                     answers = [d["answer"] for d in self.data]
                 else:
                     self.logger.warn(
-                        f"wrong dataset type: {self.dataset_type}")
+                        f"wrong dataset type: {self.dataset_name}")
                     exit()
                 
                 answers, metadata = self.flatten(answers)
@@ -365,7 +375,10 @@ class QAData(object):
             exit()
         self.logger.info(
             logging_prefix + "Loaded {} examples from {} data".format(len(self.dataset), self.data_type))
-
+        # make sure all questions are included in evaluation mode
+        if not self.is_training:
+            assert len(input_ids) == len(self), ( len(input_ids), len(self))
+        self.logger.info("DEV length check has passed")
         if do_return:
             return self.dataset
 

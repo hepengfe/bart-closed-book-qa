@@ -101,7 +101,7 @@ CUDA_VISIBLE_DEVICES=1 python cli.py \
         --verbose
 
 -------------- ELECTRA
-python cli.py \
+CUDA_VISIBLE_DEVICES=1 python cli.py \
         --model electra \
         --do_train --output_dir out/nq-electra-closed-qa \
         --train_file  data/nqopen/nqopen-train.json  \
@@ -116,7 +116,8 @@ python cli.py \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv\
-        --verbose
+        --eval_period 100 \
+        --verbose 
 
 -------- Continue training Bart from model trained on NQ, also it uses wiki 2020
 # previous argument train_bs=12 test_bs=12
@@ -297,7 +298,8 @@ def main():
                 "If `do_predict` is True, then `predict_file` must be specified.")
 
     if args.model.lower() == "t5" and args.prepend_question_token == False:
-        logger.warning("t5 model needs prepending ")
+        logger.warning("t5 model needs prepending, it's adjusted now")
+        args.prepend_question_token = True
         
     logger.info("Using {} gpus".format(args.n_gpu))
     run(args, logger)

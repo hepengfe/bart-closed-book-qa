@@ -39,6 +39,9 @@ class BertSpanPredictor(BertForQuestionAnswering):
         end_logits = end_logits.squeeze(-1) # [batch_size, input_length]
 
         loss = get_loss(start_positions, end_positions, answer_mask, start_logits, end_logits) 
+        #         total_loss = None
+
+
         if is_training:
             return loss
         else:
@@ -94,7 +97,6 @@ class ElectraSpanPredictor(ElectraForQuestionAnswering):
             #                 attention_mask=attention_mask,
             #                 token_type_ids=token_type_ids,
             #                 inputs_embeds=inputs_embeds)[0]
-            import pdb; pdb.set_trace()
             # hidden state is at index 0
             outputs = self.electra(input_ids,
                                 attention_mask=attention_mask,
@@ -119,7 +121,7 @@ class ElectraSpanPredictor(ElectraForQuestionAnswering):
             start_logits, end_logits = logits.split(1, dim=-1)
             start_logits = start_logits.squeeze(-1) # [batch_size, input_length]
             end_logits = end_logits.squeeze(-1) # [batch_size, input_length]
-            loss = get_loss(start_positions, end_positions, answer_mask, start_logits, end_logits) 
+            loss = get_loss(start_positions, end_positions, answer_mask, start_logits, end_logits, self.electra.device) 
 
             if is_training:
                 return loss
@@ -231,13 +233,29 @@ class ElectraSpanPredictor(ElectraForQuestionAnswering):
 
 
 
-def get_loss(start_positions, end_positions, answer_mask, start_logits, end_logits):
-    answer_mask = answer_mask.type(torch.FloatTensor).cuda()
+def get_loss(start_positions, end_positions, answer_mask, start_logits, end_logits, device):
+    """[summary]
+        if start_positions is not None and end_positions is not None:
+            # If we are on multi-GPU, split add a dimension
+            if len(start_positions.size()) > 1:
+                start_positions = start_positions.squeeze(-1)
+            if len(end_positions.size()) > 1:
+                end_positions = end_positions.squeeze(-1)
+            # sometimes the start/end positions are outside our model inputs, we ignore these terms
+            ignored_index = start_logits.size(1)
+            start_positions.clamp_(0, ignored_index)
+            end_positions.clamp_(0, ignored_index)
+
+            loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
+            start_loss = loss_fct(start_logits, start_positions)
+            end_loss = loss_fct(end_logits, end_positions)
+            total_loss = (start_loss + end_loss) / 2
+    """
+    answer_mask = answer_mask.type(torch.FloatTensor).to(device)
     ignored_index = start_logits.size(1)
     start_positions.clamp_(0, ignored_index)
     end_positions.clamp_(0, ignored_index)
     loss_fct = CrossEntropyLoss(reduce=False, ignore_index=ignored_index)
-
     # NOTE: torch unbind serves a way to generate a list of tensors
     start_losses = [(loss_fct(start_logits, _start_positions) * _span_mask) \
                     for (_start_positions, _span_mask) \
@@ -252,12 +270,15 @@ def get_loss(start_positions, end_positions, answer_mask, start_logits, end_logi
     N = len(start_positions) 
     M = len(start_positions[0])
     loss_tensor=loss_tensor.view(N, M, -1).max(dim=1)[0] # taking the maximum loss along dimension of input
-    span_loss = _take_mml(loss_tensor)
-    return span_loss
+    # span_loss = _take_mml(loss_tensor, device)
+    # return span_loss
+    # import pdb;pdb.set_trace()
+    loss_tensor= torch.sum(loss_tensor, dim=0)
+    return loss_tensor
 
-def _take_mml(loss_tensor):
+def _take_mml(loss_tensor, device):
     marginal_likelihood = torch.sum(torch.exp(
             - loss_tensor - 1e10 * (loss_tensor==0).float()), 1)
     return -torch.sum(torch.log(marginal_likelihood + \
-                                torch.ones(loss_tensor.size(0)).cuda()*(marginal_likelihood==0).float()))
+                                torch.ones(loss_tensor.size(0)).to(device)*(marginal_likelihood==0).float()))
 

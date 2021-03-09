@@ -32,9 +32,7 @@ def run(args, logger):
         if args.model.lower() == "bert":
             tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
         elif args.model.lower() == "electra":
-
-            tokenizer = ElectraTokenizer.from_pretrained('google/electra-large-generator')
-        
+            tokenizer = ElectraTokenizer.from_pretrained('google/electra-large-discriminator')
         else:
             logger.warn(
                 "Please specify correct model for span extraction. e.g. bert")
@@ -67,16 +65,22 @@ def run(args, logger):
         logger.info(f"answer type is {answer_type}")
         train_data = QAData(logger, args, args.train_file, "train")
         dev_data = QAData(logger, args, args.predict_file, "dev")
-        logger.info(f"[train data]  Start loading...")
-        logger.info(f"[train data]  batch size {args.train_batch_size}")
+        train_data_prefix =  "[TRAIN DATA]\t"
+        logger.info(train_data_prefix + "Start loading...")
+        logger.info(train_data_prefix + f"batch size {args.train_batch_size}")
         train_data.load_dataset(tokenizer)
         train_data.load_dataloader()
-
-        logger.info("[dev data] Start loading...")
-        logger.info(f"[dev data]  batch size {args.predict_batch_size}")
+        dev_data_prefix = "[DEV DATA]\t" 
+        logger.info(dev_data_prefix +"Start loading...")
+        logger.info(dev_data_prefix + f"batch size {args.predict_batch_size}")
+        # if args.debug:
+        #     logger.info(dev_data_prefix + "[DEBUG MODE]: load train data as dev data")
+        #     dev_data = train_data
+        # else:
         dev_data.load_dataset(tokenizer)
         dev_data.load_dataloader()
-        
+        # dev_data.load_dataset(tokenizer)
+        # dev_data.load_dataloader() 
         # for i, batch in enumerate(train_data.dataloader):
         #     import pdb; pdb.set_trace()
         #     break
@@ -125,14 +129,19 @@ def run(args, logger):
                 model =  BertSpanPredictor.from_pretrained(args.checkpoint)
                 # model = BertSpanPredictor.from_pretrained(
                 #     "bert-base-uncased", state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+            elif args.model.lower() == "electra":
+                config = ElectraConfig.from_pretrained(args.checkpoint)
+                config.gradient_checkpointing = args.gradient_cp
+                model =  ElectraSpanPredictor.from_pretrained(args.checkpoint) 
             else:
 
                 print("wrong model argument")
                 exit()
 
         else:
-            logger.info(f"[{args.model}]  gradient checkpoint mode:  {args.gradient_cp}")
-            logger.info(f"[{args.model}]  Loading pre-trained model ")
+            model_prefix = f"[{args.model.upper()}]\t"
+            logger.info(f"{model_prefix}gradient checkpoint mode:  {args.gradient_cp}")
+            logger.info(f"{model_prefix}Loading pre-trained model ")
             
             # spanseqgen
             if args.predict_type.lower() == "spanseqgen":
@@ -163,7 +172,7 @@ def run(args, logger):
                     exit()
             # span extraction
             elif args.predict_type.lower() == "spanextraction":
-                logger.info(f"[{args.model}] model enabled for span predictions")
+                logger.info(f"{model_prefix}model enabled for span predictions")
                 
                 # TODO: add more variants span extraction pre-trained model
                 if args.model.lower() == "bert":
@@ -177,6 +186,7 @@ def run(args, logger):
                     config.gradient_checkpointing = args.gradient_cp
                     model = ElectraSpanPredictor.from_pretrained(
                         'google/electra-large-discriminator', config = config)
+                    
                 else:
                     logger.warn("Wrong model argument")
                     exit()
@@ -187,7 +197,7 @@ def run(args, logger):
                     torch.cuda.device_count()))
                 args.n_gpu = torch.cuda.device_count()
             model = torch.nn.DataParallel(model)
-            logger.info(f"[{args.model}] data parallelism status: True")
+            logger.info(f"{model_prefix}data parallelism status: True")
         # adjust model parallism argument by device
         if args.device != "cuda":
             if args.model_parallel == True:
@@ -197,8 +207,7 @@ def run(args, logger):
             model.is_model_parallel = True
         else:
             model.is_model_parallel = False        
-        logger.info(f"[{args.model}] model parallelism status: {model.is_model_parallel}")
-
+        logger.info(f"{model_prefix}model parallelism status: {model.is_model_parallel}")
         model.to(torch.device(args.device))
 
         no_decay = ['bias', 'LayerNorm.weight']
@@ -219,17 +228,9 @@ def run(args, logger):
         logger.info(f"[{args.model}] start prediction")
         checkpoint = os.path.join(args.output_dir, 'best-model.pt')
 
-        def convert_to_single_gpu(state_dict):
-            def _convert(key):
-                if key.startswith('module.'):
-                    return key[7:]
-                return key
-            return {_convert(key): value for key, value in state_dict.items()}
-        print("predict hasn't been modified")
-        exit()
-        model = MyBart.from_pretrained("facebook/bart-large",
-                                       state_dict=convert_to_single_gpu(torch.load(checkpoint)))
-        logger.info("Loading checkpoint from {}".format(checkpoint))
+        
+        model = MyBart.from_pretrained(args.check_point)
+        logger.info("Loading checkpoint model from {}".format(checkpoint))
         # if args.single_gpu:
         model.to(torch.device(args.device))
         # elif torch.cuda.is_available():
@@ -382,19 +383,20 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
     #     print("not implemented yet")
     #     exit()
     if predict_type.lower() == "spanseqgen":
-        for i, batch in enumerate(dev_data.dataloader):
+        for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
             
-            if torch.cuda.is_available():
-                batch = [b.to(device) for b in batch]
+            # if torch.cuda.is_available():
+            batch = [b.to(device) for b in batch]
             # import pdb;pdb.set_trace()
             # print("reduce some variables")
+            
             outputs = model.generate(input_ids=batch[0],
                                      attention_mask=batch[1],
                                      num_beams=dev_data.args.num_beams,
                                      max_length=dev_data.args.max_output_length,
                                      early_stopping=True,)
             # outputs = model.generate(input_ids=batch[0] )
-            # Q: span extraction: what it generates?
+            # Q: span efxtraction: what it generates?
             # overwrite bert generate function
 
             # TODO: if it's logits then use decode function in span utils
@@ -410,9 +412,10 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
         all_end_logits = []
         all_input_data = []
 
-        for i, batch in enumerate(dev_data.dataloader):
-            if torch.cuda.is_available():
-                batch = [b.to(device) for b in batch]
+        for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
+            # if torch.cuda.is_available():
+           
+            batch = [b.to(device) for b in batch]
             qa_outputs = model(input_ids=batch[0], attention_mask=batch[1],
                                              token_type_ids=batch[2], inputs_embeds=None,
                                              start_positions=batch[3], end_positions=batch[4], answer_mask=batch[5],
@@ -420,8 +423,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
             start_logits, end_logits = qa_outputs.start_logits, qa_outputs.end_logits
             # Q: span extraction: what it generates?
             # overwrite bert generate function
-
-            # TODO: add these arguments later
+            # from IPython import embed; embed()
             start_logits = start_logits.detach().cpu().numpy().tolist()
             end_logits = end_logits.detach().cpu().numpy().tolist()
             input_ids = batch[0].detach().cpu().numpy().tolist()
@@ -429,28 +431,9 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
             all_start_logits += start_logits
             all_end_logits += end_logits
             
+            
 
-            # for (curr_input_data, curr_start_logits, curr_end_logits) in zip(input_ids, start_logits, end_logits):
-            #     predictions.append(decode(curr_start_logits, curr_end_logits, curr_input_data, dev_data.tokenizer, top_k_answers, max_answer_length))
-
-            # text_predictions = decode(start_logits, end_logits, input_ids,
-            #                           dev_data.tokenizer, top_k_answers, max_answer_length)
-
-
-
-            # # TODO: if it's logits then use decode function in span utils
-            # # import pdb
-            # # pdb.set_trace()
-            # # print("test text predictions")
-            # for input_, pred in zip(batch[0], text_predictions):
-            #     # import pdb
-            #     # pdb.set_trace()
-            #     # print("expect pred to be a list of tokens")
-            #     # pred = dev_data.decode(output)
-            #     predictions.append(pred)
-            # print("predictions size / input size ",
-            #       len(predictions), "/ ", len(batch[0])*(i+1))
-
+        
         # NOTE: in the decoding module, the input batch size matches the predictions size 
         predictions = decode(all_start_logits, all_end_logits, all_input_data, dev_data.tokenizer,
                          args.top_k_answers, max_answer_length=args.max_answer_length)

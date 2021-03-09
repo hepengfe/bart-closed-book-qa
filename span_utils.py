@@ -97,7 +97,7 @@ def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path
         for input, (s, e) in zip(inputs, metadata):
             curr_answers = answers[s:e]
             contained.append(any([answer.lower() in input[1].lower()
-                                for answer in curr_answers]))
+                                for answer in curr_answers])) # for all acceptable answers, if it's in input[1], it's represented as 1 in list
         logger.info(f"Top k passages contians {np.mean(contained)} answers")
         logger.info("Not found encoded cache, now encoding QP concatenation ")
         # encoding is time consuming part, this version of transformer doesn't have BartTokenizerFast
@@ -158,9 +158,7 @@ def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path
         # during inference stage, we still want to keep them for evaluation and all data should be included
         if is_training and len(detected_spans) == 0:
             continue
-        # TODO: uncomment the original code
-        # if is_training and len(detected_spans)==0:
-        #     continue
+
 
 
         # TODO: it could have some better way to save RAM but current implementation ensures correctness
