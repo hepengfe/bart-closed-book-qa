@@ -88,6 +88,7 @@ def run(args, logger):
         # for i, batch in enumerate(dev_data.dataloader):
         #     import pdb; pdb.set_trace()
         #     break
+    model_prefix = f"[{args.model.upper()}]\t"
     if args.do_train:
         if args.checkpoint is not None:
             # def convert_to_single_gpu(state_dict):
@@ -139,7 +140,7 @@ def run(args, logger):
                 exit()
 
         else:
-            model_prefix = f"[{args.model.upper()}]\t"
+            
             logger.info(f"{model_prefix}gradient checkpoint mode:  {args.gradient_cp}")
             logger.info(f"{model_prefix}Loading pre-trained model ")
             
