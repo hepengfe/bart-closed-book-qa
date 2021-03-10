@@ -82,8 +82,8 @@ python cli.py \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv
------------- bert training (updated) train_bs=300
-CUDA_VISIBLE_DEVICES=1 python cli.py \
+------------ bert training (updated) train_bs=340
+python cli.py \
         --model bert \
         --do_train --output_dir out/nq-bert-closed-qa \
         --train_file  data/nqopen/nqopen-train.json  \

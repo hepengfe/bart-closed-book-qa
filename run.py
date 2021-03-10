@@ -275,6 +275,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
     logger.info(f"[{args.model}]   Start training!")
     epoch_range = range(int(args.start_epoch), int(args.num_train_epochs))
     epoch_range = tqdm(epoch_range) if args.verbose else epoch_range 
+    wait_step = 0
     for epoch in epoch_range:   
         if args.verbose:
             logger.info(f"[{args.model}]\t epoch: {epoch}")
@@ -425,17 +426,19 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
             # Q: span extraction: what it generates?
             # overwrite bert generate function
             # from IPython import embed; embed()
+            # import pdb; pdb.set_trace()
             start_logits = start_logits.detach().cpu().numpy().tolist()
             end_logits = end_logits.detach().cpu().numpy().tolist()
             input_ids = batch[0].detach().cpu().numpy().tolist()
             all_input_data += input_ids
             all_start_logits += start_logits
             all_end_logits += end_logits
-            
+
             
 
         
         # NOTE: in the decoding module, the input batch size matches the predictions size 
+        # import pdb; pdb.set_trace()
         predictions = decode(all_start_logits, all_end_logits, all_input_data, dev_data.tokenizer,
                          args.top_k_answers, max_answer_length=args.max_answer_length)
 

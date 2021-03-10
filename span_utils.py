@@ -96,6 +96,7 @@ def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path
         contained = []
         for input, (s, e) in zip(inputs, metadata):
             curr_answers = answers[s:e]
+
             contained.append(any([answer.lower() in input[1].lower()
                                 for answer in curr_answers])) # for all acceptable answers, if it's in input[1], it's represented as 1 in list
         logger.info(f"Top k passages contians {np.mean(contained)} answers")
@@ -146,12 +147,11 @@ def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path
         # now, detect answer spans from passages
         # span is represented by the indices in QP concatenation
         detected_spans = []
-
         # compare answer ids and passage ids(whose index starts with offset)
         for curr_answer_input_ids in answer_input_ids: # iterate acceptable answers
             for i in range(offset, len(curr_input_ids)-len(curr_answer_input_ids)+1): # scan through passage token ids
                 if curr_input_ids[i:i+len(curr_answer_input_ids)]==curr_answer_input_ids: # window size is the length of the answer
-                    detected_spans.append( (i, i+len(curr_input_ids)-1))
+                    detected_spans.append( (i, i+len(curr_answer_input_ids)-1))
                     if len(detected_spans)==max_n_answers:
                         break
         # during training, we skip data entry with no detected span
