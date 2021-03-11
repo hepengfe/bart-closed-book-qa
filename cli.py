@@ -42,11 +42,11 @@ CUDA_VISIBLE_DEVICES=1,0 python cli.py \
         --device cuda \
         --max_input_length 750 \
         --top_k_passages 5 \
-        --eval_period 1000 \
+        --eval_period 100 \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv \
-        --verbose
+        --verbose --debug
 ----------- train T5 (updated)
  python cli.py \
         --model t5 \
@@ -82,7 +82,7 @@ python cli.py \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv
------------- bert training (updated) train_bs=340
+------------ bert training (updated) train_bs=320
 python cli.py \
         --model bert \
         --do_train --output_dir out/nq-bert-closed-qa \
@@ -98,10 +98,10 @@ python cli.py \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv \
-        --verbose
+        --verbose --gradient_cp
 
--------------- ELECTRA
-CUDA_VISIBLE_DEVICES=1 python cli.py \
+-------------- ELECTRA  train_bs=100, test_bs=1
+python cli.py \
         --model electra \
         --do_train --output_dir out/nq-electra-closed-qa \
         --train_file  data/nqopen/nqopen-train.json  \
@@ -116,10 +116,10 @@ CUDA_VISIBLE_DEVICES=1 python cli.py \
         --ranking_folder_path data/reranking_results/nqopen \
         --data_folder_path data/nqopen \
         --passages_path data/wiki/psgs_w100.tsv\
-        --eval_period 100 \
-        --verbose 
+        --eval_period 200 \
+        --verbose --gradient_cp 
 
--------- Continue training Bart from model trained on NQ, also it uses wiki 2020
+-------- finetuning: Bart, Continue training Bart from model trained on NQ, also it uses wiki 2020
 # previous argument train_bs=12 test_bs=12
 CUDA_VISIBLE_DEVICES=1 python cli.py \
         --model bart \
@@ -139,7 +139,118 @@ CUDA_VISIBLE_DEVICES=1 python cli.py \
         --ranking_folder_path data/reranking_results/ambigqa \
         --data_folder_path data/ambigqa \
         --passages_path data/wiki/psgs_w100_20200201.tsv \
-        --fine_tune
+        --fine_tune --verbose
+----------- finetuning: ELECTRA
+python cli.py \
+        --model electra \
+        --checkpoint  out/saved/nq-electra-closed-qa/ \
+        --do_train --output_dir out/ambig-electra-closed-qa \
+        --train_file data/ambigqa/ambigqa_train.json \
+        --predict_file data/ambigqa/ambigqa_dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device  cuda \
+        --gradient_cp \
+        --max_input_length 512 \
+        --top_k_passages 5 \
+        --top_k_answers 5 \
+        --eval_period 1000 \
+        --ranking_folder_path data/reranking_results/ambigqa \
+        --data_folder_path data/ambigqa \
+        --passages_path data/wiki/psgs_w100_20200201.tsv \
+        --fine_tune --verbose
+---------- finetuning: bert
+python cli.py \
+        --model bert \
+        --checkpoint  out/saved/nq-bert-closed-qa/ \
+        --do_train --output_dir out/ambig-bert-closed-qa \
+        --train_file data/ambigqa/ambigqa_train.json \
+        --predict_file data/ambigqa/ambigqa_dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device  cuda \
+        --gradient_cp \
+        --max_input_length 512 \
+        --top_k_passages 5 \
+        --top_k_answers 5 \
+        --eval_period 1 \
+        --ranking_folder_path data/reranking_results/ambigqa \
+        --data_folder_path data/ambigqa \
+        --passages_path data/wiki/psgs_w100_20200201.tsv \
+        --fine_tune --verbose
+----------- (meeting debug) train bart   (updated)
+python cli.py \
+        --model bart \
+        --do_train --output_dir out/nq-bart-closed-qa \
+        --train_file data/nqopen/nqopen-train.json \
+        --predict_file data/nqopen/nqopen-dev.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device cuda \
+        --max_input_length 750 \
+        --top_k_passages 5 \
+        --eval_period 100 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv \
+        --verbose --debug
+------------ bart evaluate on test dataset 
+python cli.py \
+        --model bart \
+        --do_predict --output_dir out/nq-bart-closed-qa \
+        --train_file data/nqopen/nqopen-train.json \
+        --predict_file data/nqopen/nqopen-test.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device 0 \
+        --max_input_length 750 \
+        --top_k_passages 5 \
+        --eval_period 100 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv \
+        --checkpoint out/saved/nq-bart-closed-qa-best/best-model.pt
+        --verbose
+-------- evaluate bert
+python cli.py \
+        --model bert \
+        --do_predict --output_dir out/nq-bert-closed-qa \
+        --train_file  data/nqopen/nqopen-train.json  \
+        --predict_file data/nqopen/nqopen-test.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanExtraction \
+        --device 1 \
+        --max_input_length 512 \
+        --top_k_passages 5 \
+        --eval_period 100 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv \
+        --verbose --gradient_cp \
+        --checkpoint out/saved/nq-bert-closed-qa\
+---------- evaluate t5
+python cli.py \
+        --model t5 \
+        --do_predict --output_dir out/nq-t5-closed-qa \
+        --predict_file data/nqopen/nqopen-test.json \
+        --train_batch_size ${train_bs} \
+        --predict_batch_size ${test_bs} \
+        --predict_type  SpanSeqGen \
+        --device 0 \
+        --max_input_length 512 \
+        --top_k_passages 5 \
+        --eval_period 100 \
+        --ranking_folder_path data/reranking_results/nqopen \
+        --data_folder_path data/nqopen \
+        --passages_path data/wiki/psgs_w100.tsv \
+        --verbose --gradient_cp \
+        --checkpoint out/saved/nq-t5-closed-qa-no-prepending\
+        --verbose
 """
 
 
@@ -302,6 +413,10 @@ def main():
         args.prepend_question_token = True
         
     logger.info("Using {} gpus".format(args.n_gpu))
+    if args.device == "cuda":
+        assert args.n_gpu > 1, "if there is only one gpu, set args.device=0"
+    if args.do_predict:
+        assert args.checkpoint is not None, "must have a model to load to make prediction"
     run(args, logger)
 
 

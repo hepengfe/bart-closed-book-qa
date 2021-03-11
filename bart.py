@@ -44,8 +44,8 @@ class MyBart(BartForConditionalGeneration):
         """
         if is_training:
             # don't know why but merge the code from transfromer 2.9
-            index_of_eos = (input_ids.ne(self.config.pad_token_id).sum(dim=1) - 1).unsqueeze(-1)
-            decoder_start_token_id = decoder_input_ids[:, 0] = input_ids.gather(1, index_of_eos).squeeze()
+            # index_of_eos = (input_ids.ne(self.config.pad_token_id).sum(dim=1) - 1).unsqueeze(-1)
+            # decoder_start_token_id = decoder_input_ids[:, 0] = input_ids.gather(1, index_of_eos).squeeze()
             # _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id, decoder_start_token_id)
             _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id, self.config.decoder_start_token_id)
         else:

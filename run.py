@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 
 def run(args, logger):
+
     if args.predict_type.lower() == "spanseqgen":
         if args.model.lower() == "bart":
             tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
@@ -49,7 +50,10 @@ def run(args, logger):
                 args.top_k_passages = k
                 args.max_input_length = l
                 train_data = QAData(logger, args, args.train_file, "train")
-                dev_data = QAData(logger, args, args.predict_file, "dev")
+                if args.do_predict:
+                    dev_data = QAData(logger, args, args.predict_file, "test") 
+                else:
+                    dev_data = QAData(logger, args, args.predict_file, "dev")
 
                 print("Pre-process training data")
                 train_data.load_dataset(tokenizer)
@@ -63,20 +67,26 @@ def run(args, logger):
     else:
         answer_type = "span" if "extraction" in args.predict_type.lower() else "seq"
         logger.info(f"answer type is {answer_type}")
-        train_data = QAData(logger, args, args.train_file, "train")
-        dev_data = QAData(logger, args, args.predict_file, "dev")
-        train_data_prefix =  "[TRAIN DATA]\t"
-        logger.info(train_data_prefix + "Start loading...")
-        logger.info(train_data_prefix + f"batch size {args.train_batch_size}")
-        train_data.load_dataset(tokenizer)
-        train_data.load_dataloader()
-        dev_data_prefix = "[DEV DATA]\t" 
+        
+        if args.do_predict:
+            dev_data = QAData(logger, args, args.predict_file, "test") 
+            dev_data_prefix = "[TEST DATA]\t" 
+        else:
+            train_data = QAData(logger, args, args.train_file, "train") 
+            dev_data = QAData(logger, args, args.predict_file, "dev")
+            train_data_prefix =  "[TRAIN DATA]\t"
+            logger.info(train_data_prefix + "Start loading...")
+            logger.info(train_data_prefix + f"batch size {args.train_batch_size}")
+            train_data.load_dataset(tokenizer)
+            train_data.load_dataloader()
+            dev_data_prefix = "[DEV DATA]\t" 
         logger.info(dev_data_prefix +"Start loading...")
         logger.info(dev_data_prefix + f"batch size {args.predict_batch_size}")
         # if args.debug:
         #     logger.info(dev_data_prefix + "[DEBUG MODE]: load train data as dev data")
         #     dev_data = train_data
         # else:
+        # import pdb; pdb.set_trace()
         dev_data.load_dataset(tokenizer)
         dev_data.load_dataloader()
         # dev_data.load_dataset(tokenizer)
@@ -89,15 +99,61 @@ def run(args, logger):
         #     import pdb; pdb.set_trace()
         #     break
     model_prefix = f"[{args.model.upper()}]\t"
-    if args.do_train:
-        if args.checkpoint is not None:
-            # def convert_to_single_gpu(state_dict):
-            #     def _convert(key):
-            #         if key.startswith('module.'):
-            #             return key[7:]
-            #         return key
-            #     return {_convert(key): value for key, value in state_dict.items()}
-            logger.info(f"Found checkpoint, loading pretrained model: [{args.model}] at {args.checkpoint}")
+    if args.checkpoint is not None:
+        
+        if args.checkpoint.endswith(".pt"):
+            logger.info(f"{model_prefix}Load old model with pt data format")
+            def convert_to_single_gpu(state_dict):
+                def _convert(key):
+                    if key.startswith('module.'):
+                        return key[7:]
+                    return key
+                return {_convert(key): value for key, value in state_dict.items()}
+            if args.model.lower() == "bart":
+                # TODO: add flag that when there is more specialized token,
+                # NOTE: it serves a template to 
+
+                # config = BartConfig.from_pretrained("bart-large")
+                # config.gradient_checkpointing = args.gradient_cp
+                config = BartConfig.from_pretrained("facebook/bart-large")
+                logger.warn("Due to the previously added token, here I manually add one on config vocab size")
+                config.vocab_size += 1
+
+                # # the other way is to save a bart-large file with resize token size 
+                # model = MyBart.from_pretrained(args.checkpoint, config = config)
+                # model = MyBart.from_pretrained(None,
+                #     state_dict=convert_to_single_gpu(torch.load(args.checkpoint)), config = config)
+
+                model = MyBart.from_pretrained(None,
+                                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)), config = config)
+
+            elif args.model.lower() == "t5":
+                # config = T5Config.from_pretrained(args.checkpoint)
+                # if args.gradient_cp:
+                #     logger.warn("T5 gradient checkpoint hasn't been implemented")
+                #     args.gradient_cp = False
+                # config.gradient_checkpointing = args.gradient_cp
+                # model = MyT5.from_pretrained('t5-large')
+                # model =  MyT5.from_pretrained(args.checkpoint)
+                model = MyT5.from_pretrained('t5-base', state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+
+            elif args.model.lower() == "bert":
+                # config = BertConfig.from_pretrained(args.checkpoint)
+                # config.gradient_checkpointing = args.gradient_cp
+                # model =  BertSpanPredictor.from_pretrained(args.checkpoint)
+                model = BertSpanPredictor.from_pretrained(
+                    "bert-base-uncased", state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+            elif args.model.lower() == "electra":
+                # config = ElectraConfig.from_pretrained(args.checkpoint)
+                # config.gradient_checkpointing = args.gradient_cp
+                # model =  ElectraSpanPredictor.from_pretrained(args.checkpoint) 
+                model = ElectraSpanPredictor.from_pretrained(
+                    "electra-large-uncased", state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+            else:
+
+                print("wrong model argument: ", args.model.lower())
+                exit() 
+        else:
             if args.model.lower() == "bart":
                 # TODO: add flag that when there is more specialized token,
                 # NOTE: it serves a template to 
@@ -127,23 +183,25 @@ def run(args, logger):
             elif args.model.lower() == "bert":
                 config = BertConfig.from_pretrained(args.checkpoint)
                 config.gradient_checkpointing = args.gradient_cp
-                model =  BertSpanPredictor.from_pretrained(args.checkpoint)
+                model =  BertSpanPredictor.from_pretrained(args.checkpoint, config = config)
                 # model = BertSpanPredictor.from_pretrained(
                 #     "bert-base-uncased", state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
             elif args.model.lower() == "electra":
                 config = ElectraConfig.from_pretrained(args.checkpoint)
                 config.gradient_checkpointing = args.gradient_cp
-                model =  ElectraSpanPredictor.from_pretrained(args.checkpoint) 
+                model =  ElectraSpanPredictor.from_pretrained(args.checkpoint, config = config) 
             else:
 
-                print("wrong model argument")
+                print("wrong model argument: ", args.model.lower())
                 exit()
+    if args.do_train:
+        # if args.checkpoint is not None:
+        #     logger.info(f"Found checkpoint, loading pretrained model: [{args.model}] at {args.checkpoint}")
 
-        else:
-            
+
+        if args.checkpoint is None:
             logger.info(f"{model_prefix}gradient checkpoint mode:  {args.gradient_cp}")
             logger.info(f"{model_prefix}Loading pre-trained model ")
-            
             # spanseqgen
             if args.predict_type.lower() == "spanseqgen":
                 if args.model.lower() == "bart":
@@ -227,11 +285,11 @@ def run(args, logger):
 
     if args.do_predict:
         logger.info(f"[{args.model}] start prediction")
-        checkpoint = os.path.join(args.output_dir, 'best-model.pt')
+        # checkpoint = os.path.join(args.output_dir, 'best-model.pt')
 
         
-        model = MyBart.from_pretrained(args.check_point)
-        logger.info("Loading checkpoint model from {}".format(checkpoint))
+        # model = MyBart.from_pretrained(args.check_point)
+        # logger.info("Loading checkpoint model from {}".format(checkpoint))
         # if args.single_gpu:
         model.to(torch.device(args.device))
         # elif torch.cuda.is_available():
@@ -253,7 +311,9 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
     stop_training = False
 
     # reload some training status if
-    
+    if args.fine_tune:
+        assert args.checkpoint != None, "assert fine-tuning must have pre-trained model"
+
     if args.checkpoint is not None:
         if args.fine_tune:
             logger.info("Load previous model and start fine tuning on ambig dataset")
@@ -328,6 +388,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 scheduler.step()
                 model.zero_grad()
 
+            # import pdb; pdb.set_trace() # check Training VRAM
             if global_step % args.eval_period == 0:
                 model.eval()
                 # import pdb
@@ -377,7 +438,6 @@ def get_model(model, device):
 def inference(args, model, dev_data, predict_type, device="cuda", save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
-
     # if predict_type == "thresholding":
     #     # generate answer
     #

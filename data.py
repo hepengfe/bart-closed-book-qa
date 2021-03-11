@@ -33,6 +33,7 @@ class QAData(object):
         """
         self.data_path = data_path
         self.is_training = dataset_type == "train"  # determine is_training status now as dataset_type might be modfied later for file accessing
+        self.dataset_type =dataset_type 
         if args.debug:
             self.data_path = data_path.replace("train", "dev")
             dataset_type_for_file_accessing = "dev"
@@ -54,7 +55,7 @@ class QAData(object):
         if type(self.data[0]["id"])==int:
             for i in range(len(self.data)):
                 self.data[i]["id"] = str(self.data[i]["id"])
-                 
+        # import pdb; pdb.set_trace()
 
 
         self.index2id = {i:d["id"] for i, d in enumerate(self.data)}
@@ -135,9 +136,9 @@ class QAData(object):
         return new_answers, metadata
 
     def load_dataset(self, tokenizer, do_return=False):
-        logging_prefix = f"[{self.data_type} data]\t".upper()
+        logging_prefix = f"[{self.dataset_type} data]\t".upper()
         self.tokenizer = tokenizer
-
+        # import pdb; pdb.set_trace()
         # NOTE:  Might have bug here 
         if self.args.model == "bart":
             self.tokenizer.add_tokens(["<SEP>"]) # add extra token for BART 
@@ -426,6 +427,7 @@ class QAData(object):
         
         assert len(predictions)==len(self), (len(predictions), len(self))
         ems = []
+        # import pdb; pdb.set_trace()
         if self.answer_type == "seq":
             for (prediction, dp) in zip(predictions, self.data):
                 ems.append(get_exact_match(prediction, dp["answer"]))
