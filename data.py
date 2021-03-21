@@ -16,6 +16,7 @@ import pickle
 from collections import defaultdict
 from bart import MyBartModel
 from span_utils import preprocess_span_input, dump_pickle, load_pickle
+import itertools
 
 class QAData(object):
 
@@ -34,11 +35,19 @@ class QAData(object):
         self.data_path = data_path
         self.is_training = dataset_type == "train"  # determine is_training status now as dataset_type might be modfied later for file accessing
         self.dataset_type =dataset_type 
+
         if args.debug:
             self.data_path = data_path.replace("train", "dev")
             dataset_type_for_file_accessing = "dev"
         else:
-            dataset_type_for_file_accessing = dataset_type 
+            if args.fine_tune:
+                logger.info("Not AmbigQA test dataset available, using dev dataset")
+                if not self.is_training:
+                    dataset_type_for_file_accessing = "dev"  # fine tuning stage
+                else:
+                    dataset_type_for_file_accessing = dataset_type # 
+            else:
+                dataset_type_for_file_accessing = dataset_type 
         # NOTE: self.data is the original data. Not tokenized nor encoded.
         with open(self.data_path, "r") as f:
             self.data = json.load(f)  # format example: [ {'id': '-8178292525996414464', 'question': 'big little lies season 2 how many episodes', 'answer': ['seven']}, ..... ]
@@ -77,7 +86,7 @@ class QAData(object):
             self.data_type = "train"
         else:
             raise NotImplementedError()
-        self.metric = "EM"
+        
         self.max_input_length = self.args.max_input_length
         self.tokenizer = None
         self.dataset = None
@@ -86,7 +95,7 @@ class QAData(object):
         self.debug = args.debug
         self.answer_type = "span" if "extraction" in args.predict_type.lower() else "seq" # TODO: condition on args.predict_type
         
-        self.dataset_name = None
+        self.dataset_name = None # ambig or nq
         self.passages = None
         
         # idea of naming detection is finding the folder name
@@ -115,7 +124,7 @@ class QAData(object):
         self.data_path = os.path.join(
             args.data_folder_path, f"{data_file_n}{dataset_type_for_file_accessing}.json")
         self.top_k_passages = args.top_k_passages
-
+        self.metric = "EM" if self.dataset_name == "nq" else "F1"
         
 
     def __len__(self):
@@ -127,13 +136,34 @@ class QAData(object):
     def decode_batch(self, tokens):
         return [self.decode(_tokens) for _tokens in tokens]
 
-    def flatten(self, answers):
-        new_answers, metadata = [], []
-        for answer in answers:
-            metadata.append((len(new_answers), len(new_answers)+len(answer)))
-            new_answers += answer
-            
-        return new_answers, metadata
+    def flatten(self, answers, is_ambig=False):
+        if not is_ambig:
+            new_answers, metadata = [], []
+            for answer in answers:
+                metadata.append((len(new_answers), len(new_answers)+len(answer)))
+                new_answers += answer
+                
+            return new_answers, metadata
+        else:
+            # sep token id
+            new_answers, metadata = [], []
+            for _answers in answers:
+                assert type(_answers) == list
+                metadata.append([])
+                for answer in _answers:
+                    metadata[-1].append([])
+                    for _answer in answer:
+                        assert len(_answer) > 0, _answers
+                        assert type(_answer) == list and type(
+                            _answer[0]) == str, _answers
+                        metadata[-1][-1].append((len(new_answers),
+                                                len(new_answers)+len(_answer)))
+                        new_answers += _answer
+            return new_answers, metadata
+
+
+
+
 
     def load_dataset(self, tokenizer, do_return=False):
         logging_prefix = f"[{self.dataset_type} data]\t".upper()
@@ -146,8 +176,12 @@ class QAData(object):
         prepend_question_token = False
         if postfix[:2].lower() == "t5": # TODO: find a smarter way to check if it's dataset for T5
            prepend_question_token = True
-        postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(
-            self.top_k_passages), self.answer_type])  # TODO: can be written more elegantly by using dictionary
+        if self.args.augment_k_times == 1:
+            postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(
+                self.top_k_passages), self.answer_type])  # TODO: can be written more elegantly by using dictionary
+        else:
+            postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(
+                self.top_k_passages), self.answer_type, "answers",  self.args.augment_k_times, "augmentation"])
         if self.debug:
             postfix += "_debug"
         # TODO: decide to delete tokenized path if it's finally not needed
@@ -227,30 +261,78 @@ class QAData(object):
                 self.logger.info(logging_prefix + "Not found tokenized data, start loading passagesing...")
                 self.passages = topKPassasages(
                     self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path)
+                
+                self.args.augment_k_times
                 questions = [d["question"] if d["question"].endswith("?") else d["question"]+"?"
                             for d in self.data]
                 # NOTE: this code is untested yet
                 if self.dataset_name == "ambig":
-                    answers = []
-                    for d in self.data:
-                        cur_answer = []
-                        for qa_d in d["annotations"]:
-                            if qa_d["type"] == "singleAnswer":
-                                # answers.append(qa_d["answer"])
-                                cur_answer.extend(qa_d["answer"])
-                            elif qa_d["type"] == "multipleQAs":
-                                # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
-                                pair_answers = []
-                                for pair in qa_d["qaPairs"]:
-                                    pair_answers.extend(pair["answer"]) if len(
-                                        pair["answer"]) > 1 else pair_answers.append(pair["answer"][0])
-                                cur_answer.extend(pair_answers)
-                            else:
-                                self.logger.warn("error in qa_d type: ")
-                                exit()
-                        answers.append(cur_answer) # for one question, there is one list of answers
-                        # import pdb; pdb.set_trace()
-                        # print("check cur_answer")
+                    if self.answer_type == "span":
+                        answers = []
+                        for d in self.data:
+                            cur_answer = []
+                            for qa_d in d["annotations"]:
+                                if qa_d["type"] == "singleAnswer":
+                                    # answers.append(qa_d["answer"])
+                                    cur_answer.extend(qa_d["answer"])
+                                elif qa_d["type"] == "multipleQAs":
+                                    # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+                                    pair_answers = []
+                                    for pair in qa_d["qaPairs"]:
+                                        pair_answers.extend(pair["answer"]) 
+                                    cur_answer.extend(pair_answers)
+                                else:
+                                    self.logger.warn("error in qa_d type: ")
+                                    exit()
+                            
+                            answers.append(cur_answer) # for one question, there is one list of answers
+                    elif self.answer_type == "seq":
+                        answers = []
+                        for data_entry in self.data:
+
+                            cur_answer = []
+                            for qa_d in data_entry["annotations"]:
+                                # import pdb
+                                # pdb.set_trace()
+                                
+                                if qa_d["type"] == "singleAnswer":
+                                    # answers.append(qa_d["answer"])
+                                    if len(cur_answer) == 0:
+                                        cur_answer = qa_d["answer"]
+                                    else: # cases cur_answer is already a list of acceptable concatenated answers
+                                        cur_answer = itertools.product(
+                                            cur_answer, qa_d["answer"])
+                                        
+                                        
+                                elif qa_d["type"] == "multipleQAs":
+                                    # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+                                    acceptable_answers_for_questions = []  # new acceptable answers from questions
+                                    for pair in qa_d["qaPairs"]:
+                                        acceptable_answers_for_questions.append(
+                                            pair["answer"])
+                                    if len(cur_answer) != 0:
+                                        # expect parameter to be 1-D list 
+                                        cur_answer = itertools.product(cur_answer,
+                                            *acceptable_answers_for_questions)  # a list of tuples   ("a <SEP> b", "c")
+                                    else:
+                                        cur_answer = itertools.product(
+                                            *acceptable_answers_for_questions)
+                                else:
+                                    self.logger.warn("error in qa_d type: ")
+                                    exit()
+                            # # append a list of acceptable concatenated answers
+                            try:
+                                # how to slice answer to ensure tokens lower than 
+                                cur_answer = [answer[:num_answers_kept] for answer in cur_answer]  # [(1,2,3,....36), (1,2,3,...,37)] -> [(1,2,3,...,10), (1,2,3,...,10)]
+                                cur_answer = [
+                                    " <SEP> ".join(answer) for answer in cur_answer]
+                                cur_answer = [
+                                    answer + " </s>" for answer in cur_answer]
+                            except TypeError:
+                                import pdb; pdb.set_trace()
+                            answers.append(cur_answer)
+                    else:
+                        raise NotImplementedError()
                 elif self.dataset_name == "nq":
                     answers = [d["answer"] for d in self.data]
                 else:
@@ -258,7 +340,7 @@ class QAData(object):
                         f"wrong dataset type: {self.dataset_name}")
                     exit()
                 
-                answers, metadata = self.flatten(answers)
+                answers, metadata = self.flatten(answers, self.dataset_name == "ambig")
                 
                 if self.args.do_lowercase:
                     questions = [question.lower() for question in questions]
@@ -316,6 +398,7 @@ class QAData(object):
                     for i in tqdm(range(len(questions))):
                         cur_titles = []
                         cur_passages = []
+                        
                         for p in self.passages.get_passages(i):
                             cur_titles.append(p["title"])
                             cur_passages.append(p["text"])
@@ -338,9 +421,6 @@ class QAData(object):
                     # label is the start and end positions
                     answer_coverage_rate = d["answer_coverage_rate"]
 
-
-
-
                 else:
                     print("Unrecognizable answer type")
                     exit()     
@@ -361,12 +441,6 @@ class QAData(object):
                                         in_metadata=None, out_metadata=metadata,
                                         is_training=self.is_training)
         elif self.answer_type == "span":
-            # import pdb
-            # pdb.set_trace()
-
-            # self.dataset = QASpanDataset(*d.values())
-            # self.dataset = Dataset(input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
-            
             # batch size x max_n_answer 
             list_of_tensors = self.tensorize(
                 input_ids, attention_mask, token_type_ids, start_positions, end_positions, answer_mask)
@@ -393,8 +467,6 @@ class QAData(object):
         for l in args:
             max_tensor_len = max([len(t) for t in l])
             new_tensor = torch.zeros(len(l), max_tensor_len,  dtype=torch.long)
-            # import pdb
-            # pdb.set_trace()
             for i in range(len(l)):
                 t = l[i]
                 if type(t) == list:
@@ -427,30 +499,56 @@ class QAData(object):
         
         assert len(predictions)==len(self), (len(predictions), len(self))
         ems = []
-        # import pdb; pdb.set_trace()
-        if self.answer_type == "seq":
-            for (prediction, dp) in zip(predictions, self.data):
-                ems.append(get_exact_match(prediction, dp["answer"]))
-        else:
-            for (prediction, dp) in zip(predictions, self.data):
-                for pred in prediction:
-                    ems.append(get_exact_match(pred, dp["answer"]))
-        return ems
+        f1s = []
+        # from IPython import embed; embed()
+
+        # TODO 
+        if self.dataset_name == "ambig":
+            if self.answer_type == "seq": 
+                raise NotImplementedError()
+            else:
+                for (prediction, dp) in zip(predictions, self.data):
+                    cur_answer = []
+                    for qa_d in dp["annotations"]:
+                        if qa_d["type"] == "singleAnswer":
+                            # answers.append(qa_d["answer"])
+                            cur_answer.extend(qa_d["answer"])
+                        elif qa_d["type"] == "multipleQAs":
+                            # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+                            pair_answers = []
+                            for pair in qa_d["qaPairs"]:
+                                pair_answers.extend(pair["answer"]) 
+                            cur_answer.extend(pair_answers)
+                        else:
+                            self.logger.warn("error in qa_d type: ")
+                            exit()
+                    f1s.append(get_f1(cur_answer, prediction))
+            return f1s
+        elif self.dataset_name ==  "nq":
+            if self.answer_type == "seq":
+                for (prediction, dp) in zip(predictions, self.data):
+                    ems.append(get_exact_match(prediction, dp["answer"]))
+            else:
+                for (prediction, dp) in zip(predictions, self.data):
+                    for pred in prediction:
+                        ems.append(get_exact_match(pred, dp["answer"]))
+            return ems
+        # def get_exact_match(prediction, groundtruth):
+        # if type(groundtruth)==list:
+        #     if len(groundtruth)==0:
+        #         return 0
+        #     return np.max([get_exact_match(prediction, gt) for gt in groundtruth])
+        # return (normalize_answer(prediction) == normalize_answer(groundtruth)
+        
 
     def save_predictions(self, predictions):
         assert len(predictions)==len(self), (len(predictions), len(self))
         prediction_dict = {dp["id"]:prediction for dp, prediction in zip(self.data, predictions)}
-        save_path = os.path.join(self.args.output_dir, "{}predictions.json".format(self.args.prefix))
+        save_path = os.path.join(
+            self.args.output_dir, f"{self.args.prefix}predictions_top_{self.args.top_k_answers}_answers.json")
         with open(save_path, "w") as f:
             json.dump(prediction_dict, f)
         self.logger.info("Saved prediction in {}".format(save_path))
-
-def get_exact_match(prediction, groundtruth):
-    if type(groundtruth)==list:
-        if len(groundtruth)==0:
-            return 0
-        return np.max([get_exact_match(prediction, gt) for gt in groundtruth])
-    return (normalize_answer(prediction) == normalize_answer(groundtruth))
 
 def normalize_answer(s):
     def remove_articles(text):
@@ -463,6 +561,47 @@ def normalize_answer(s):
     def lower(text):
         return text.lower()
     return white_space_fix(remove_articles(remove_punc(lower(s))))
+
+
+def get_exact_match(prediction, groundtruth):
+    if type(groundtruth)==list:
+        if len(groundtruth)==0:
+            return 0
+        return np.max([get_exact_match(prediction, gt) for gt in groundtruth])
+    return (normalize_answer(prediction) == normalize_answer(groundtruth))
+
+
+
+def get_f1(answers, predictions, is_equal=get_exact_match):
+    '''
+    :answers: a list of list of strings
+    :predictions: a list of strings
+    '''
+    
+    assert len(answers)>0 and len(predictions)>0, (answers, predictions)
+    occupied_answers = [False for _ in answers]
+    occupied_predictions = [False for _ in predictions]
+    for i, answer in enumerate(answers):
+        for j, prediction in enumerate(predictions):
+            if occupied_answers[i] or occupied_predictions[j]:
+                continue
+            em = is_equal(answer, prediction)
+            if em:
+                occupied_answers[i] = True
+                occupied_predictions[j] = True
+    assert np.sum(occupied_answers)==np.sum(occupied_predictions)
+    a, b = np.mean(occupied_answers), np.mean(occupied_predictions)
+    if a+b==0:
+        return 0
+    return 2*a*b/(a+b)
+
+# def get_exact_match(prediction, groundtruth):
+#     if type(groundtruth)==list:
+#         if len(groundtruth)==0:
+#             return 0
+#         return np.max([get_exact_match(prediction, gt) for gt in groundtruth])
+#     return (normalize_answer(prediction) == normalize_answer(groundtruth))
+
 
 
 
@@ -630,6 +769,3 @@ class topKPassasages():
         for k in [1, 5, 10, 100]:
             print ("Recall @ %d\t%.1f%%" % (k, 100*np.mean(recall[k])))
         return recall
-
-    def evaluate_macro_average_recall(self):
-        pass  

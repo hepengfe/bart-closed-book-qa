@@ -13,8 +13,6 @@ from bart import MyBart
 from T5 import MyT5
 from tqdm import tqdm
 
-# TODO 1: ELECTRA
-# TODO 2: 
 
 
 def run(args, logger):
@@ -191,9 +189,13 @@ def run(args, logger):
                 config.gradient_checkpointing = args.gradient_cp
                 model =  ElectraSpanPredictor.from_pretrained(args.checkpoint, config = config) 
             else:
-
                 print("wrong model argument: ", args.model.lower())
                 exit()
+    is_ambig = False
+    if args.fine_tune:
+        is_ambig = True
+        if args.model.lower() == "bert" or args.model.lower() == "electra":
+            model.set_ambig(args.threshold)  # as it only affects generating, we set the class variable here
     if args.do_train:
         # if args.checkpoint is not None:
         #     logger.info(f"Found checkpoint, loading pretrained model: [{args.model}] at {args.checkpoint}")
@@ -249,7 +251,7 @@ def run(args, logger):
                 else:
                     logger.warn("Wrong model argument")
                     exit()
-
+        # data parallel
         if args.device == "cuda" and torch.cuda.device_count() > 1:
             if args.n_gpu == 1:
                 logger.warning("User specified one gpu but there are actually {}, it has been corrected".format(
@@ -257,7 +259,7 @@ def run(args, logger):
                 args.n_gpu = torch.cuda.device_count()
             model = torch.nn.DataParallel(model)
             logger.info(f"{model_prefix}data parallelism status: True")
-        # adjust model parallism argument by device
+        # model parallism
         if args.device != "cuda":
             if args.model_parallel == True:
                 logger.warn("only one gpu is enabled so model parallel is now disabled") 
@@ -282,7 +284,9 @@ def run(args, logger):
                                                     num_warmup_steps=args.warmup_steps,
                                                     num_training_steps=100000)
         train(args, logger, model, train_data, dev_data, optimizer, scheduler)
+    
 
+    
     if args.do_predict:
         logger.info(f"[{args.model}] start prediction")
         # checkpoint = os.path.join(args.output_dir, 'best-model.pt')
@@ -296,7 +300,7 @@ def run(args, logger):
         #     model.to(torch.device("cuda"))
         model.eval()
         ems = inference(args, model, dev_data, args.predict_type,
-                        device=args.device, save_predictions=True)
+                        device=args.device, is_ambig = is_ambig, save_predictions=True)
         logger.info("%s on %s data: %.2f" %
                     (dev_data.metric, dev_data.data_type, np.mean(ems)*100))
 
@@ -317,6 +321,12 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
     if args.checkpoint is not None:
         if args.fine_tune:
             logger.info("Load previous model and start fine tuning on ambig dataset")
+            logger.info(f"Augument {args.augment_k_times} times Ambig Questions")
+            if args.augment_k_times != "varied":
+                if args.augment_k_times.isdigit():
+                    args.augment_k_times = int(args.augment_k_times)
+                else:
+                    raise NotImplementedError() 
         else:
             logger.info("Not continue fine tuning on Ambig, loading previous checkpoint stat and model")
             with open(os.path.join(args.output_dir, 'checkpoint_stat.json'), "r") as fp:
@@ -395,7 +405,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 # pdb.set_trace()
                 logger.info(f"Start evaluating at global step {global_step}")
                 curr_em = inference(args, get_model(model, args.device), dev_data,
-                                    args.predict_type, device=args.device, save_predictions=True)
+                                    args.predict_type, device=args.device, is_ambig=get_model(model, args.device).is_ambig, save_predictions=True)
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
                     global_step,
                     np.mean(train_losses),
@@ -435,15 +445,10 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
 def get_model(model, device):
     return model.module if device=="cuda" else model
 
-def inference(args, model, dev_data, predict_type, device="cuda", save_predictions=False):
+def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = False, save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
-    # if predict_type == "thresholding":
-    #     # generate answer
-    #
-    # elif predict_type == "SpanSeqGen":
-    #     print("not implemented yet")
-    #     exit()
+
     if predict_type.lower() == "spanseqgen":
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
             
@@ -456,7 +461,9 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
                                      attention_mask=batch[1],
                                      num_beams=dev_data.args.num_beams,
                                      max_length=dev_data.args.max_output_length,
-                                     early_stopping=True,)
+                                     early_stopping=True,
+                                     )
+            
             # outputs = model.generate(input_ids=batch[0] )
             # Q: span efxtraction: what it generates?
             # overwrite bert generate function
@@ -466,9 +473,6 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
                 pred = dev_data.decode(output)
                 predictions.append(pred)
     elif predict_type.lower() == "spanextraction":
-        # import pdb
-        # pdb.set_trace()
-        # print("enable interactive mode and test code of evaluating span extraction")
         all_start_logits = []
 
         all_end_logits = []
@@ -483,10 +487,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
                                              start_positions=batch[3], end_positions=batch[4], answer_mask=batch[5],
                                              is_training=False)
             start_logits, end_logits = qa_outputs.start_logits, qa_outputs.end_logits
-            # Q: span extraction: what it generates?
-            # overwrite bert generate function
-            # from IPython import embed; embed()
-            # import pdb; pdb.set_trace()
+
             start_logits = start_logits.detach().cpu().numpy().tolist()
             end_logits = end_logits.detach().cpu().numpy().tolist()
             input_ids = batch[0].detach().cpu().numpy().tolist()
@@ -496,11 +497,8 @@ def inference(args, model, dev_data, predict_type, device="cuda", save_predictio
 
             
 
-        
-        # NOTE: in the decoding module, the input batch size matches the predictions size 
-        # import pdb; pdb.set_trace()
         predictions = decode(all_start_logits, all_end_logits, all_input_data, dev_data.tokenizer,
-                         args.top_k_answers, max_answer_length=args.max_answer_length)
+                         args.top_k_answers, max_answer_length=args.max_answer_length, threshold = args.threshold, is_ambig = is_ambig)
 
     if save_predictions:
         dev_data.save_predictions(predictions)

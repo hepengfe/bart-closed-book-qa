@@ -26,6 +26,14 @@ def invert_mask(attention_mask):
     return attention_mask.eq(0)
 
 class MyBart(BartForConditionalGeneration):
+    def __init__(self, config):
+        super().__init__(config)
+        self.is_ambig = False
+    def set_ambig(self):
+        """
+        Set ambig QA type there is no good way passing the variable.
+        """
+        self.is_ambig = False
     def forward(self, input_ids, attention_mask=None, encoder_outputs=None,
                 decoder_input_ids=None, decoder_attention_mask=None, decoder_cached_states=None, 
                 past_key_values=None, head_mask = None,  return_dict=None, output_attentions=None, output_hidden_states=None,
@@ -80,7 +88,6 @@ class MyBart(BartForConditionalGeneration):
 
         # NOTE: not sure if it's the same as function
         # lm_logits = F.linear(outputs[0], self.model.shared.weight, bias=self.final_logits_bias)
-
         if is_training:
             # loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
             # loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),

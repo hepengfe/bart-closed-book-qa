@@ -15,8 +15,15 @@ class BertSpanPredictor(BertForQuestionAnswering):
     def __init__(self, config):
         config.num_labels = 2
         super().__init__(config)
-        self.qa_classifier = nn.Linear(config.hidden_size, 1)
+        # self.qa_classifier = nn.Linear(config.hidden_size, 1)
+        self.is_ambig = False
 
+    def set_ambig(self, threshold):
+        """
+        Set ambig QA type there is no good way passing the variable.
+        """
+        self.is_ambig = True
+        self.threshold = threshold
     def forward(self,
                 input_ids=None, attention_mask=None,
                 token_type_ids=None, inputs_embeds=None,
@@ -64,7 +71,7 @@ class BertSpanPredictor(BertForQuestionAnswering):
                                                 start_positions=None, end_positions=None, answer_mask=None,
                                                 is_training=False)
         predictions = decode(start_logits, end_logits, input_ids,
-                              tokenizer, top_k_answers, max_answer_length)
+                             tokenizer, top_k_answers, max_answer_length, self.threshold, self.is_ambig)
 
         return predictions
 
@@ -81,38 +88,24 @@ class ElectraSpanPredictor(ElectraForQuestionAnswering):
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels) # NOTE: is it two labels or one -> two: start/end logits   one: scores
 
         self.init_weights()
+        self.is_ambig = False
+    def set_ambig_parameter(self, threshold):
+        self.is_ambig = True
+        self.threshold = 1.0
 
     def forward(self,
                 input_ids=None, attention_mask=None,
                 token_type_ids=None, inputs_embeds=None,
                 start_positions=None, end_positions=None, answer_mask=None,
                 is_training=False):
-            # check input embeds
-
-            # input_ids, attention_mask, token_type_ids should have a shape of [batch_size, input_length]
-            # start_positions, end_positions, answer_mask should have a shape of [batch_size, max_n_answers]
 
 
-            # output = self.electra(input_ids,
-            #                 attention_mask=attention_mask,
-            #                 token_type_ids=token_type_ids,
-            #                 inputs_embeds=inputs_embeds)[0]
-            # hidden state is at index 0
             outputs = self.electra(input_ids,
                                 attention_mask=attention_mask,
                                 token_type_ids=token_type_ids,
                                 inputs_embeds=inputs_embeds,
                                 return_dict = True)
-        #     discriminator_hidden_states = self.electra(
-        #     input_ids,
-        #     attention_mask=attention_mask,
-        #     token_type_ids=token_type_ids,
-        #     position_ids=position_ids,
-        #     head_mask=head_mask,
-        #     inputs_embeds=inputs_embeds,
-        #     output_attentions=output_attentions,
-        #     output_hidden_states=output_hidden_states,
-        # )
+
             
             sequence_output = outputs[0]
             # output will have a shape of [batch_size, input_length, hidden_size]
@@ -134,7 +127,19 @@ class ElectraSpanPredictor(ElectraForQuestionAnswering):
                     attentions=outputs.attentions,
                 )
 
+    # NOTE: this function is untested
+    def generate(self, input_ids=None, attention_mask=None,
+                token_type_ids=None, inputs_embeds=None,
+                start_positions=None, end_positions=None, answer_mask=None,
+                is_training=False):
+        start_logits, end_logits = self.forward(input_ids=None, attention_mask=None,
+                                                token_type_ids=None, inputs_embeds=None,
+                                                start_positions=None, end_positions=None, answer_mask=None,
+                                                is_training=False)
+        predictions = decode(start_logits, end_logits, input_ids,
+                             tokenizer, top_k_answers, max_answer_length, self.threshold, self.is_ambig)
 
+        return predictions
 
 
 

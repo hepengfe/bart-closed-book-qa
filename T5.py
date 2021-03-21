@@ -283,6 +283,9 @@ class T5StackCP(T5Stack):
                 decoder_outputs = (loss,) + decoder_outputs
 
             return decoder_outputs + encoder_outputs
+
+
+
 class MyT5(T5ForConditionalGeneration):
     def __init__(self, config):
         super(MyT5, self).__init__(config)
@@ -296,21 +299,6 @@ class MyT5(T5ForConditionalGeneration):
             self.decoder = T5StackCP(self.config, self.shared)
             self.init_weights()
 
-    # def forward(self, input_ids, attention_mask=None, encoder_outputs=None,
-    #             decoder_input_ids=None, decoder_attention_mask=None, decoder_cached_states=None,
-    #             use_cache=False, is_training=False):
-    #     """
-    #     Assume it's
-    #     :param input_ids:
-    #     :param attention_mask:
-    #     :param encoder_outputs:
-    #     :param decoder_input_ids:
-    #     :param decoder_attention_mask:
-    #     :param decoder_cached_states:
-    #     :param use_cache:
-    #     :param is_training:
-    #     :return:
-    #     """
     def forward(self, input_ids = None,
                 attention_mask = None,
                 encoder_outputs = None,
@@ -487,69 +475,4 @@ class MyT5(T5ForConditionalGeneration):
 
 
 
-
-
-
-
-
-
-        #     # import pdb
-        #     # pdb.set_trace()
-        #     # TODO: pending check
-        #     outputs = super(MyT5, self).forward(input_ids=input_ids,
-        #                             attention_mask=attention_mask,
-        #                             encoder_outputs=encoder_outputs,
-        #                             decoder_input_ids=_decoder_input_ids,
-        #                             decoder_attention_mask=decoder_attention_mask,
-        #                             decoder_past_key_value_states=decoder_past_key_value_states,
-        #                             use_cache=use_cache)
-        #
-        # loss = outputs[0]
-        # if is_training:
-        #     return loss
-        # # import pdb
-        # # pdb.set_trace()
-        # # lm_logits = F.linear(outputs[0], self.shared.weight.T) # remove bias=self.final_logits_bias from the argument
-        # # # lm_logits = outputs[0]
-        # # if is_training:
-        # #     # loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
-        # #     # loss = loss_fct(lm_logits.view(-1),decoder_input_ids.view(-1))
-        # #
-        # #     loss = loss_fct(lm_logits.view(-1),decoder_input_ids.view(-1))
-        # #     # loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
-        # #     #                 decoder_input_ids.view(-1))
-        # #     return loss
-        # return (lm_logits, ) + outputs[1:]
-        #
-
-
-
-
-
-
-
-#
-# if is_training:
-#     _decoder_input_ids = shift_tokens_right(decoder_input_ids, self.config.pad_token_id)
-# else:
-#     _decoder_input_ids = decoder_input_ids
-#
-# outputs = self.model(
-#     input_ids,
-#     attention_mask=attention_mask,
-#     encoder_outputs=encoder_outputs,
-#     decoder_input_ids=_decoder_input_ids,
-#     decoder_attention_mask=decoder_attention_mask,
-#     decoder_cached_states=decoder_cached_states,
-#     use_cache=use_cache,
-# )
-#
-# lm_logits = F.linear(outputs[0], self.model.shared.weight, bias=self.final_logits_bias)
-#
-# if is_training:
-#     loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
-#     loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
-#                     decoder_input_ids.view(-1))
-#     return loss
-# return (lm_logits, ) + outputs[1:]
 

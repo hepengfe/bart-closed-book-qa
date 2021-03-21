@@ -3,12 +3,16 @@ import pdb
 from re import A
 from IPython import embed
 from tqdm import tqdm
+
 import numpy as np
 import json
 import os
 import pickle # pickle is faster than json if the user doesn't need readability
-
-
+import string
+import re
+import torch
+import scipy
+from scipy.special import log_softmax
 def dump_pickle(input_data, answer_data, metadata, encoded_input_path, encoded_answer_path, metadata_path):
     with open(encoded_input_path, "wb") as fp:
         pickle.dump(input_data, fp)
@@ -18,6 +22,21 @@ def dump_pickle(input_data, answer_data, metadata, encoded_input_path, encoded_a
         pickle.dump(metadata, fp)
 
 
+def normalize_answer(s):
+    def remove_articles(text):
+        return re.sub(r'\b(a|an|the)\b', ' ', text)
+
+    def white_space_fix(text):
+        return ' '.join(text.split())
+
+    def remove_punc(text):
+        exclude = set(string.punctuation)
+        return ''.join(ch for ch in text if ch not in exclude)
+
+    def lower(text):
+        return text.lower()
+    return white_space_fix(remove_articles(remove_punc(lower(s))))
+    
 def load_pickle(encoded_input_path, encoded_answer_path, metadata_path):
     """ load encoded input data (concatenations of question and passages) and answer data from picle files 
 
@@ -175,8 +194,8 @@ def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path
     answer_coverage_rate = len(new_input_ids)/len(input_ids) # measure how often answers appear in passages
     return {"input_ids": new_input_ids, "attention_mask": new_attention_mask, "token_type_ids": new_token_type_ids,
             "start_positions": start_positions, "end_positions": end_positions, "answer_mask": answer_mask, "answer_coverage_rate": answer_coverage_rate}
-
-def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_answer_length):
+import torch.nn.functional as F
+def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_answer_length, threshold,  is_ambig=False):
     """[summary]
     Decode start and end logits (span prediction) into a list of text and its score
     Args:
@@ -191,6 +210,16 @@ def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_an
         [type]: [description]
     """             
     assert len(start_logits)==len(end_logits)==len(input_ids)
+    assert top_k_answers >= 3
+    
+    def to_log_softmax_scores(scores):
+        ls_scores = [t[1] for t in scores]
+        ls_scores = log_softmax(ls_scores).tolist()
+        new_scores = []
+        for i in range(len(scores)):
+            new_t = (scores[i][0], ls_scores[i])
+            new_scores.append(new_t)
+        return new_scores
 
     all_predictions = []
     # loop over all questions (curr_input)
@@ -210,10 +239,12 @@ def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_an
             for (j, e) in enumerate(curr_end_logits[i:i+max_answer_length]):
                 scores.append(((i, i+j), s+e))
         scores = sorted(scores, key=lambda x: x[1], reverse=True)
+        scores = to_log_softmax_scores(scores)
         # print("sorting finished")
         chosen_span_intervals = []
         nbest = [] # record n best for current question
-        
+        p_l = []  
+
         # postprocess spans and scores
         for (start_index, end_index), score in scores:
             if end_index < start_index:
@@ -243,6 +274,29 @@ def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_an
 
             if len(nbest)==top_k_answers:
                 break
+        
+        if is_ambig:
+            included = set()
+            _nbest = []
+            for p in nbest:
+                text = normalize_answer(p["text"])
+                if text not in included:
+                    _nbest.append(p)
+                    included.add(text)
+            nbest = _nbest
+            threshold = 0.1
+            import pdb; pdb.set_trace()
+            _nbest = [p for p in nbest if p['log_softmax'] >= np.log(threshold)] # TODO: threshold
+            for p in nbest:
+                p_l.append(p['log_softmax'])
+            
+            if len(_nbest) == 0:
+                nbest = [nbest[0]]
+            elif len(_nbest) > 5:
+                nbest = _nbest[:5]
+            else:
+                nbest = _nbest
+        print(np.mean(p_l))
         # a list of dictionary
         all_predictions.append(nbest)
 
