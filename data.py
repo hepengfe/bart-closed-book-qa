@@ -17,7 +17,7 @@ from collections import defaultdict
 from bart import MyBartModel
 from span_utils import preprocess_span_input, dump_pickle, load_pickle
 import itertools
-
+from numpy import random
 class QAData(object):
 
     def __init__(self, logger, args, data_path, dataset_type):
@@ -147,15 +147,25 @@ class QAData(object):
         else:
             # sep token id
             new_answers, metadata = [], []
+            # one data entry:   [ [singleQA["USA", "US"]], [multipleQA["CA", "Canada"], ["Mexico"]   ]   ]
+            # _answers: []  answer for one data entry
+            # answer:  answer for one annotation (singleQA or multipleQA)    [ [singleQA["USA", "US"]], [multipleQA["CA", "Canada"], ["Mexico"]   ]   ]    
+            # _answer: a list of acceptable answers for one 
+
+
             for _answers in answers:
                 assert type(_answers) == list
-                metadata.append([])
-                for answer in _answers:
+                metadata.append([]) 
+                for answer in _answers: # _answer: current: a list of acceptable answers:  ["US", "Canada"]   expect: [["US", "USA"], ["Canada", "CA"]]
                     metadata[-1].append([])
-                    for _answer in answer:
+                    for _answer in answer:  # current: "United States"    expect: ["United States", "USA"]
+                        # one possibility: each singleAnswer qaPair has a list 
+                        import pdb; pdb.set_trace()
                         assert len(_answer) > 0, _answers
                         assert type(_answer) == list and type(
                             _answer[0]) == str, _answers
+                        # _answer should be a tuple of one answer
+
                         metadata[-1][-1].append((len(new_answers),
                                                 len(new_answers)+len(_answer)))
                         new_answers += _answer
@@ -288,49 +298,87 @@ class QAData(object):
                             answers.append(cur_answer) # for one question, there is one list of answers
                     elif self.answer_type == "seq":
                         answers = []
+                        num_of_permutations_l = []
+                        num_of_tokens_l = []
                         for data_entry in self.data:
 
                             cur_answer = []
+                            
+                            # Q: does data_entry has more than one annotations? Or each answer is categorized 
                             for qa_d in data_entry["annotations"]:
-                                # import pdb
-                                # pdb.set_trace()
-                                
                                 if qa_d["type"] == "singleAnswer":
+                                    cur_answer.append(  [list(set(qa_d["answer"]))] )
                                     # answers.append(qa_d["answer"])
-                                    if len(cur_answer) == 0:
-                                        cur_answer = qa_d["answer"]
-                                    else: # cases cur_answer is already a list of acceptable concatenated answers
-                                        cur_answer = itertools.product(
-                                            cur_answer, qa_d["answer"])
+                                    # if len(cur_answer) == 0:
+                                    #     cur_answer = qa_d["answer"]
+                                    # else: # cases cur_answer is already a list of acceptable concatenated answers
+                                    #     cur_answer = itertools.product(
+                                    #         cur_answer, qa_d["answer"])
                                         
                                         
                                 elif qa_d["type"] == "multipleQAs":
-                                    # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
-                                    acceptable_answers_for_questions = []  # new acceptable answers from questions
+                                    # cur_answer = itertools.product(
+                                    #     *cur_answer)
                                     for pair in qa_d["qaPairs"]:
-                                        acceptable_answers_for_questions.append(
-                                            pair["answer"])
-                                    if len(cur_answer) != 0:
-                                        # expect parameter to be 1-D list 
-                                        cur_answer = itertools.product(cur_answer,
-                                            *acceptable_answers_for_questions)  # a list of tuples   ("a <SEP> b", "c")
-                                    else:
-                                        cur_answer = itertools.product(
-                                            *acceptable_answers_for_questions)
+                                        cur_answer.append([list(set(pair["answer"]))])
                                 else:
                                     self.logger.warn("error in qa_d type: ")
                                     exit()
-                            # # append a list of acceptable concatenated answers
-                            try:
-                                # how to slice answer to ensure tokens lower than 
-                                cur_answer = [answer[:num_answers_kept] for answer in cur_answer]  # [(1,2,3,....36), (1,2,3,...,37)] -> [(1,2,3,...,10), (1,2,3,...,10)]
-                                cur_answer = [
-                                    " <SEP> ".join(answer) for answer in cur_answer]
-                                cur_answer = [
-                                    answer + " </s>" for answer in cur_answer]
-                            except TypeError:
-                                import pdb; pdb.set_trace()
-                            answers.append(cur_answer)
+                            # cur_answer  [ [singleQA["USA", "US"]], [multipleQA["CA", "Canada"], ["Mexico"]   ]   ]
+                            assert type(cur_answer) == list and \
+                                all([type(answer) == list for answer in cur_answer]) and \
+                                all([
+                                    type(_a) == str for answer in cur_answer for _answer in answer for _a in _answer])
+
+                            # how to slice answer to ensure tokens lower than 
+                            # cur_answer = [answer[:num_answers_kept] for answer in cur_answer]  # [(1,2,3,....36), (1,2,3,...,37)] -> [(1,2,3,...,10), (1,2,3,...,10)]
+                            # cur_answer = itertools.product(*cur_answer)
+                            # cur_answer = [item for item in cur_answer]
+                            # if len(cur_answer) > 30:
+                            #     rnd_indices = np.random.choice(
+                            #         len(cur_answer), size=30, replace=False)
+                            #     cur_answer = [cur_answer[i]
+                            #                     for i in rnd_indices]
+
+
+
+                            # print("num of permutations: ",
+                            #         len(cur_answer))
+                            # num_of_permutations_l.append(
+                            #     len(cur_answer))
+                            # num_of_tokens_l.append(
+                            #     len(cur_answer[0]))
+                            # it's better to transform it later after flatening
+                            # cur_answer = [" <SEP> ".join(answer) for answer in cur_answer]
+                            # cur_answer = [answer + " </s>" for answer in cur_answer]
+                            
+
+                            # NOTE: the following code is correct
+                            # answers is like the level of self.data 
+                            answers.append(cur_answer) 
+
+
+
+                            # check answer coverage
+                            
+                            # 1. number of tokens. (limit to 30 and check its coverage)
+                            # 2. number of permutations and how many to keep. (sampling strategy, )
+                            # 3. oversampling multi-answer QA 
+                            # 4. padding
+
+
+                            # 1. augumentation depending on the number of questions 
+                            # 2. cut out answer based on len(token_id) not len(cur_anwer)
+                            # 3. How the answers are kept in data get_item which causes the OOM?
+                            # type id and mask 
+
+
+                            # answers 1. one qa 2. annotation 3. str
+                                
+
+
+                        
+                        
                     else:
                         raise NotImplementedError()
                 elif self.dataset_name == "nq":
@@ -346,6 +394,9 @@ class QAData(object):
                     questions = [question.lower() for question in questions]
                     answers = [answer.lower() for answer in answers]
 
+                import pdb;pdb.set_trace()
+
+                print("check length of questions and answers, and add post-processing")
 
                 self.logger.info(logging_prefix +  "Start concatenating question and encoding")
                 if self.answer_type == "seq":
