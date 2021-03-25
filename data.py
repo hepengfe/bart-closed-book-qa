@@ -160,7 +160,6 @@ class QAData(object):
                     metadata[-1].append([])
                     for _answer in answer:  # current: "United States"    expect: ["United States", "USA"]
                         # one possibility: each singleAnswer qaPair has a list 
-                        import pdb; pdb.set_trace()
                         assert len(_answer) > 0, _answers
                         assert type(_answer) == list and type(
                             _answer[0]) == str, _answers
@@ -178,10 +177,15 @@ class QAData(object):
     def load_dataset(self, tokenizer, do_return=False):
         logging_prefix = f"[{self.dataset_type} data]\t".upper()
         self.tokenizer = tokenizer
-        # import pdb; pdb.set_trace()
+
+
+
+
+        # prepare paths and special token ids
         # NOTE:  Might have bug here 
         if self.args.model == "bart":
             self.tokenizer.add_tokens(["<SEP>"]) # add extra token for BART 
+            sep_token_id = self.tokenizer.convert_tokens_to_ids("<SEP>")
         postfix = tokenizer.__class__.__name__.replace("zer", "zed")  # For example: BartTokenizer -> BartTokenized
         prepend_question_token = False
         if postfix[:2].lower() == "t5": # TODO: find a smarter way to check if it's dataset for T5
@@ -209,6 +213,13 @@ class QAData(object):
                 and os.path.exists(encoded_answer_path) \
                 and os.path.exists(metadata_path)
 
+
+
+
+
+
+
+        # load exists cache or pre-process a new one
         # General procedure:
         # 1. check if pickle cache exists
         # 2. if not, check if tokenized data exists
@@ -247,7 +258,7 @@ class QAData(object):
             else:
                 self.logger.warn("wrong answer type")
                 exit()
-        else: 
+        else:  # not found pickle cache
             self.logger.info(logging_prefix + "Not found pickle cache, start preprocessing...")
             
             if self.load and os.path.exists(tokenized_path): 
@@ -273,9 +284,13 @@ class QAData(object):
                     self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path)
                 
                 self.args.augment_k_times
+
+                # pre-process question list from data
                 questions = [d["question"] if d["question"].endswith("?") else d["question"]+"?"
                             for d in self.data]
-                # NOTE: this code is untested yet
+
+
+                # pre-process answer list from data
                 if self.dataset_name == "ambig":
                     if self.answer_type == "span":
                         answers = []
@@ -307,65 +322,30 @@ class QAData(object):
                             # Q: does data_entry has more than one annotations? Or each answer is categorized 
                             for qa_d in data_entry["annotations"]:
                                 if qa_d["type"] == "singleAnswer":
-                                    cur_answer.append(  [list(set(qa_d["answer"]))] )
-                                    # answers.append(qa_d["answer"])
-                                    # if len(cur_answer) == 0:
-                                    #     cur_answer = qa_d["answer"]
-                                    # else: # cases cur_answer is already a list of acceptable concatenated answers
-                                    #     cur_answer = itertools.product(
-                                    #         cur_answer, qa_d["answer"])
-                                        
-                                        
+                                    answer_for_one_qa_pair = [list(
+                                        set(qa_d["answer"]))] # a list of acceptable answers for one question interpretation
+                                    
+                                    cur_answer.append(
+                                        answer_for_one_qa_pair)
                                 elif qa_d["type"] == "multipleQAs":
-                                    # cur_answer = itertools.product(
-                                    #     *cur_answer)
                                     for pair in qa_d["qaPairs"]:
-                                        cur_answer.append([list(set(pair["answer"]))])
+                                        answer_for_one_qa_pair = [list(
+                                            set(pair["answer"]))] 
+                                        cur_answer.append(answer_for_one_qa_pair)
                                 else:
                                     self.logger.warn("error in qa_d type: ")
                                     exit()
                             # cur_answer  [ [singleQA["USA", "US"]], [multipleQA["CA", "Canada"], ["Mexico"]   ]   ]
                             assert type(cur_answer) == list and \
                                 all([type(answer) == list for answer in cur_answer]) and \
-                                all([
-                                    type(_a) == str for answer in cur_answer for _answer in answer for _a in _answer])
+                                all([type(_a) == str for answer in cur_answer for _answer in answer for _a in _answer])
 
-                            # how to slice answer to ensure tokens lower than 
-                            # cur_answer = [answer[:num_answers_kept] for answer in cur_answer]  # [(1,2,3,....36), (1,2,3,...,37)] -> [(1,2,3,...,10), (1,2,3,...,10)]
-                            # cur_answer = itertools.product(*cur_answer)
-                            # cur_answer = [item for item in cur_answer]
-                            # if len(cur_answer) > 30:
-                            #     rnd_indices = np.random.choice(
-                            #         len(cur_answer), size=30, replace=False)
-                            #     cur_answer = [cur_answer[i]
-                            #                     for i in rnd_indices]
-
-
-
-                            # print("num of permutations: ",
-                            #         len(cur_answer))
-                            # num_of_permutations_l.append(
-                            #     len(cur_answer))
-                            # num_of_tokens_l.append(
-                            #     len(cur_answer[0]))
-                            # it's better to transform it later after flatening
-                            # cur_answer = [" <SEP> ".join(answer) for answer in cur_answer]
-                            # cur_answer = [answer + " </s>" for answer in cur_answer]
-                            
-
-                            # NOTE: the following code is correct
-                            # answers is like the level of self.data 
                             answers.append(cur_answer) 
 
-
-
-                            # check answer coverage
-                            
                             # 1. number of tokens. (limit to 30 and check its coverage)
                             # 2. number of permutations and how many to keep. (sampling strategy, )
                             # 3. oversampling multi-answer QA 
                             # 4. padding
-
 
                             # 1. augumentation depending on the number of questions 
                             # 2. cut out answer based on len(token_id) not len(cur_anwer)
@@ -374,11 +354,7 @@ class QAData(object):
 
 
                             # answers 1. one qa 2. annotation 3. str
-                                
 
-
-                        
-                        
                     else:
                         raise NotImplementedError()
                 elif self.dataset_name == "nq":
@@ -388,30 +364,187 @@ class QAData(object):
                         f"wrong dataset type: {self.dataset_name}")
                     exit()
                 
+
+                # flatten answer list 
                 answers, metadata = self.flatten(answers, self.dataset_name == "ambig")
                 
                 if self.args.do_lowercase:
                     questions = [question.lower() for question in questions]
                     answers = [answer.lower() for answer in answers]
 
-                import pdb;pdb.set_trace()
 
-                print("check length of questions and answers, and add post-processing")
+                # # import pdb;pdb.set_trace()
+                
+                # if self.dataset_name == "ambig":
+                #     cur_answer = [answer[:num_answers_kept] for answer in cur_answer]  # [(1,2,3,....36), (1,2,3,...,37)] -> [(1,2,3,...,10), (1,2,3,...,10)]
+                #     cur_answer = itertools.product(*cur_answer)
+                #     cur_answer = [item for item in cur_answer]
+                #     if len(cur_answer) > 30:
+                #         rnd_indices = np.random.choice(
+                #             len(cur_answer), size=30, replace=False)
+                #         cur_answer = [cur_answer[i]
+                #                         for i in rnd_indices]
+                #     # Q: do I have to discard QA pairs with incomplete answers which cannot be found in the passages?
+                #     # Q: why would we want metadata?
+                #     # Q: what's the resulting answers and metadata look like
+                #     # [ [a, a'], [b, b'], [c, c'] ]   metadata: [(0,1), (1,2), (2,3)]
+                #     #     - [[a <SEP> b <SEP> c] [a' <SEP> b' <SEP> c']]   and metadata [(0,1), (1,2)] as two acceptable answers.    len(product(*answer))
+                #     # Q: offset is independent for each answer? Yes. it's locating answers for each QPA concatenation. 
+                #     for idx, (q, md) in enumerate(zip(questions, metadata)):
+                        
+                #         for answer in answers:
+                #             cur_answer = itertools.product(*cur_answer)
+                #             # Q: do we still keep answe one-dimensional?
+                #             # Q: what is target structure of metadata
 
-                self.logger.info(logging_prefix +  "Start concatenating question and encoding")
+
+                # answers has been flattened, so it's normal to have more answers than questions
+
+                self.logger.info(logging_prefix +  "Start concatenating question and passages ")
                 if self.answer_type == "seq":
-
+                    
                     # TODO: add function pre_process in utils.py  
                     if prepend_question_token:
                         questions = ["question: " + question for question in questions] 
-                    questions = ["<s> " + q for q in questions]
-                    # TODO: add them to arguments
-                    # note that after this questions are actually a concatenation of questions and passages
-                    print(logging_prefix + "Start concatenating question and passages for top ", self.top_k_passages , " passages")
-                    for i in tqdm(range(len(questions))):
-                        for p in self.passages.get_passages(i): # add passage one by one
-                            questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
-                        questions[i] += " </s>"
+                    if self.dataset_name == "nq":
+                        questions = ["<s> " + q for q in questions]
+                        # TODO: add them to arguments
+                        # note that after this questions are actually a concatenation of questions and passages
+                        print(logging_prefix + "Start concatenating question and passages for top ", self.top_k_passages , " passages")
+                        for i in tqdm(range(len(questions))):
+                            questions[i] += " <s> "  # mark the begining of passages
+                            for p in self.passages.get_passages(i): # add passage one by one
+                                questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
+                            # mark the begining of passages
+                            questions[i] += " </s> "
+                        questions_n_passages = questions  # rename
+
+                    elif self.dataset_name == "ambig":
+                        # TODO: add function pre_process in utils.py
+                        if prepend_question_token:
+                            questions = ["question: " +
+                                        question for question in questions]
+                        questions = [" <s> " + q for q in questions]
+                        questions = [q + " </s> " for q in questions]
+
+                                           
+                        # TODO: add them to arguments
+                        # note that after this questions are actually a concatenation of questions and passages
+                        print(logging_prefix + "Start concatenating question and passages for top ",
+                                self.top_k_passages, " passages")
+                        for i in tqdm(range(len(questions))):
+                            # mark the begining of passages
+                            questions[i] += " <s> "
+                            # add passage one by one
+                            for p in self.passages.get_passages(i):
+                                # format: [CLS] question [SEP] title 1 [SEP] passages
+                                questions[i] += " <SEP> " + \
+                                    p["title"] + " <SEP> " + p["text"]
+                            questions[i] += " </s> "
+                        questions_n_passages = questions  # rename 
+
+
+
+
+
+
+                        # [(1,2,3,....36), (1,2,3,...,37)] -> [(1,2,3,...,10), (1,2,3,...,10)]
+                        # cur_answer = [answer[:num_answers_kept]
+                        #                 for answer in cur_answer]
+                        # cur_answer = itertools.product(*cur_answer)
+                        # cur_answer = [item for item in cur_answer]
+                        # if len(cur_answer) > 30:
+                        #     rnd_indices = np.random.choice(
+                        #         len(cur_answer), size=30, replace=False)
+                        #     cur_answer = [cur_answer[i]
+                        #                 for i in rnd_indices]
+                        # Q: do I have to discard QA pairs with incomplete answers which cannot be found in the passages?
+                        # Q: why would we want metadata?
+                        # Q: what's the resulting answers and metadata look like
+                        # [ [a, a'], [b, b'], [c, c'] ]   metadata: [(0,1), (1,2), (2,3)]
+                        #     - [[a <SEP> b <SEP> c] [a' <SEP> b' <SEP> c']]   and metadata [(0,1), (1,2)] as two acceptable answers.    len(product(*answer))
+                        # Q: offset is independent for each answer? Yes. it's locating answers for each QPA concatenation.
+
+                        def is_answer_in_passages(answer_str, p_str):
+                            """check the existance of answer in passages by comparing string
+
+                            Args:
+                                idx ([type]): [description]
+                            """
+                            return answer_str.lower() in p_str.lower()
+                        
+                        def get_p_str(cur_qp):
+                            qp_ids = self.tokenizer.encode(cur_qp)[:max_qp_length]
+                            p_ids = qp_ids[qp_ids.index(eos_token_id):]
+                            p_str = self.tokenizer.convert_ids_to_tokens(p_ids)
+                            p_str = self.tokenizer.convert_tokens_to_string(p_str)
+                            return p_str
+                        # def is_answer_presented_in_passages_orderly():
+
+                        
+                        # def get_tokenized_answer():
+
+                        new_questions = []
+                        new_answers = []
+                        new_metadata = []
+                        eos_token_id = self.tokenizer.eos_token_id
+                        max_qp_length = self.args.max_input_length
+
+
+                        # # new_questions
+                        for idx, (cur_qp_str, cur_md) in enumerate(zip(questions_n_passages, metadata)):
+                            # import pdb; pdb.set_trace()
+                            qp_ids = self.tokenizer.encode(
+                                cur_qp_str)[:max_qp_length]
+                            p_ids = qp_ids[qp_ids.index(eos_token_id):]
+                            p_tokens = self.tokenizer.convert_ids_to_tokens(p_ids)
+                            p_str = self.tokenizer.convert_tokens_to_string(
+                                p_tokens)
+                            found_answers_for_one_question = []
+                            
+                            for cur_md_for_qa_pair in cur_md:
+                                found_answer_for_qa_pair = []
+                                for start, end in cur_md_for_qa_pair: # iterate acceptable answer (semantically similar answers)
+                                    answer_for_qa_pair = answers[start:end] # acceptable answers for one qa pair
+                                    for cur_a_str in answer_for_qa_pair:
+                                        if self.is_training:
+                                            if is_answer_in_passages(cur_a_str, p_str):
+                                                found_answer_for_qa_pair.append(
+                                                    cur_a_str)
+                                        else:
+                                            found_answer_for_qa_pair.append(
+                                                cur_a_str)
+                                        
+                                if len(found_answer_for_qa_pair) > 0:
+                                    found_answers_for_one_question.append(
+                                        found_answer_for_qa_pair)
+                            if len(found_answers_for_one_question) == 0 and self.is_training:
+                                # actually in dev mode, length is certainly larger than zero as we will add answer no matter its presence in passages
+                                continue
+
+
+                            joined_answers = [answer for answer in itertools.product(*
+                                found_answers_for_one_question)]
+                            concatenated_answers = [" <SEP> ".join(
+                                answer) + " </s> " for answer in joined_answers]
+
+                            # NOTE: add argument, num_k
+                            max_num_of_answers = 100
+                            if len(concatenated_answers) > max_num_of_answers:
+                                rnd_indices = np.random.choice(
+                                    len(concatenated_answers), size=max_num_of_answers, replace=False)
+                                concatenated_answers = [concatenated_answers[i]
+                                                for i in rnd_indices]
+                            answer_start_idx = len(new_answers)
+                            new_answers.extend(concatenated_answers) # maintain its 1-D format
+                            answer_end_idx = len(new_answers)
+                            new_metadata.append(
+                                (answer_start_idx, answer_end_idx))
+                            new_questions.append(cur_qp_str) # even though I append the original QP string, but it will be trimmed in encode_plus
+                        
+                        metadata = new_metadata
+                        questions = new_questions
+                        answers = new_answers
 
         
                     self.logger.info(
@@ -421,12 +554,16 @@ class QAData(object):
                                                             max_length=self.args.max_input_length,
                                                             return_overflowing_tokens=True,
                                                             verbose=self.args.verbose)
+                    # import pdb; pdb.set_trace()
+                    max_answer_length = 30
                     answer_input = tokenizer.batch_encode_plus(answers,
-                                                               pad_to_max_length=True, verbose=self.args.verbose)
+                                                               pad_to_max_length=True,
+                                                               max_length=max_answer_length,
+                                                               verbose=self.args.verbose)
+                    # NOTE: uncomment dump_pickle                                                                                                                                                                 
                     dump_pickle(question_input, answer_input, metadata, encoded_input_path,
                                  encoded_answer_path, metadata_path)
-                    # add answer type variable 
-                    # two types of question answering
+
                     input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
                     decoder_input_ids, decoder_attention_mask = answer_input["input_ids"], answer_input["attention_mask"]
                     
@@ -476,6 +613,7 @@ class QAData(object):
                     print("Unrecognizable answer type")
                     exit()     
                 if self.load:
+                    print("stop before dumping")
                     with open(tokenized_path, "w") as fp:
                         if self.answer_type == "seq":
                             json.dump([input_ids, attention_mask,
@@ -484,7 +622,7 @@ class QAData(object):
                         elif self.answer_type == "span":
                             json.dump([input_ids, attention_mask, token_type_ids, start_positions,
                                     end_positions, answer_mask, answer_coverage_rate], fp)
-        
+
         # loading dataset
         if self.answer_type == "seq":
             self.dataset = QAGenDataset(input_ids, attention_mask,

@@ -21,9 +21,16 @@ def run(args, logger):
         if args.model.lower() == "bart":
             tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
             # tokenizer = BartTokenizer.from_pretrained("bart-large")
+            # import pdb
+            # pdb.set_trace()
         elif args.model.lower() == "t5":
             # tokenizer = T5Tokenizer.from_pretrained("t5-large")
             tokenizer = T5Tokenizer.from_pretrained("t5-base")
+            # import pdb; pdb.set_trace()
+        #     bos_token_id = self.tokenizer.bos_token_id
+        # eos_token_id = self.tokenizer.eos_token_id
+        # pad_token_id = self.tokenizer.pad_token_id
+        # sep_token_id = self.tokenizer.convert_tokens_to_ids(self.SEP)
         else:
             print("wrong model argument")
             exit()
