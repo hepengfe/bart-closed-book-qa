@@ -31,8 +31,6 @@ class BertSpanPredictor(BertForQuestionAnswering):
                 is_training=False):
         # NOTE: answer_mask is omitted
 
-        # # input_ids, attention_mask, token_type_ids should have a shape of [batch_size, input_length]
-        # # start_positions, end_positions, answer_mask should have a shape of [batch_size, max_n_answers]
         outputs = self.bert(input_ids,
                            attention_mask=attention_mask,
                            token_type_ids=token_type_ids,
@@ -46,8 +44,6 @@ class BertSpanPredictor(BertForQuestionAnswering):
         end_logits = end_logits.squeeze(-1) # [batch_size, input_length]
 
         loss = get_loss(start_positions, end_positions, answer_mask, start_logits, end_logits, self.bert.device) 
-        #         total_loss = None
-
 
         if is_training:
             return loss

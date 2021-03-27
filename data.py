@@ -38,7 +38,10 @@ class QAData(object):
 
         if args.debug:
             self.data_path = data_path.replace("train", "dev")
-            dataset_type_for_file_accessing = "dev"
+            # under debug
+            # we don't want to save train file as dev 
+            # we want to load dev file as train  (we simply don't save)
+            dataset_type_for_file_accessing = "dev"  
         else:
             if args.fine_tune:
                 logger.info("Not AmbigQA test dataset available, using dev dataset")
@@ -75,7 +78,6 @@ class QAData(object):
         # TODO: correct it back
         self.load = True  # debug mode also needs load 
         # self.load = not args.debug  # do not load the large tokenized dataset
-        # self.load =  args.debug
         self.logger = logger
         self.args = args
         if "test" in self.data_path:
@@ -125,7 +127,8 @@ class QAData(object):
             args.data_folder_path, f"{data_file_n}{dataset_type_for_file_accessing}.json")
         self.top_k_passages = args.top_k_passages
         self.metric = "EM" if self.dataset_name == "nq" else "F1"
-        
+        self.sep_token = "<SEP>" 
+        self.spaced_sep_token = " " + self.sep_token + " "
 
     def __len__(self):
         return len(self.data)
@@ -183,19 +186,19 @@ class QAData(object):
 
         # prepare paths and special token ids
         # NOTE:  Might have bug here 
-        if self.args.model == "bart":
-            self.tokenizer.add_tokens(["<SEP>"]) # add extra token for BART 
-            sep_token_id = self.tokenizer.convert_tokens_to_ids("<SEP>")
+        
+            # self.tokenizer.sep_token_id = self.tokenizer.convert_tokens_to_ids([self.sep_token])[0]
+            # self.tokenizer.sep_token = self.sep_token # set tokenizer sep token make sure masking is working properly
         postfix = tokenizer.__class__.__name__.replace("zer", "zed")  # For example: BartTokenizer -> BartTokenized
         prepend_question_token = False
         if postfix[:2].lower() == "t5": # TODO: find a smarter way to check if it's dataset for T5
            prepend_question_token = True
         if self.args.augment_k_times == 1:
             postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(
-                self.top_k_passages), self.answer_type])  # TODO: can be written more elegantly by using dictionary
+                self.top_k_passages), self.answer_type, "is_training", str(self.is_training)])  # TODO: can be written more elegantly by using dictionary
         else:
             postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(
-                self.top_k_passages), self.answer_type, "answers",  self.args.augment_k_times, "augmentation"])
+                self.top_k_passages), self.answer_type, "answers",  self.args.augment_k_times, "augmentation", "is_training", str(self.is_training)])
         if self.debug:
             postfix += "_debug"
         # TODO: decide to delete tokenized path if it's finally not needed
@@ -208,7 +211,6 @@ class QAData(object):
             "Tokenized", "Encoded").replace(".json", "_metadata.p")
         # 1. check if there is cache, if not then tokenize. If there is cache, we 
         # 2. check if
-        # import pdb; pdb.set_trace(); print("check encoded path") 
         self.cache = os.path.exists(encoded_input_path) \
                 and os.path.exists(encoded_answer_path) \
                 and os.path.exists(metadata_path)
@@ -372,40 +374,12 @@ class QAData(object):
                     questions = [question.lower() for question in questions]
                     answers = [answer.lower() for answer in answers]
 
-
-                # # import pdb;pdb.set_trace()
-                
-                # if self.dataset_name == "ambig":
-                #     cur_answer = [answer[:num_answers_kept] for answer in cur_answer]  # [(1,2,3,....36), (1,2,3,...,37)] -> [(1,2,3,...,10), (1,2,3,...,10)]
-                #     cur_answer = itertools.product(*cur_answer)
-                #     cur_answer = [item for item in cur_answer]
-                #     if len(cur_answer) > 30:
-                #         rnd_indices = np.random.choice(
-                #             len(cur_answer), size=30, replace=False)
-                #         cur_answer = [cur_answer[i]
-                #                         for i in rnd_indices]
-                #     # Q: do I have to discard QA pairs with incomplete answers which cannot be found in the passages?
-                #     # Q: why would we want metadata?
-                #     # Q: what's the resulting answers and metadata look like
-                #     # [ [a, a'], [b, b'], [c, c'] ]   metadata: [(0,1), (1,2), (2,3)]
-                #     #     - [[a <SEP> b <SEP> c] [a' <SEP> b' <SEP> c']]   and metadata [(0,1), (1,2)] as two acceptable answers.    len(product(*answer))
-                #     # Q: offset is independent for each answer? Yes. it's locating answers for each QPA concatenation. 
-                #     for idx, (q, md) in enumerate(zip(questions, metadata)):
-                        
-                #         for answer in answers:
-                #             cur_answer = itertools.product(*cur_answer)
-                #             # Q: do we still keep answe one-dimensional?
-                #             # Q: what is target structure of metadata
-
-
                 # answers has been flattened, so it's normal to have more answers than questions
 
                 self.logger.info(logging_prefix +  "Start concatenating question and passages ")
                 if self.answer_type == "seq":
                     
-                    # TODO: add function pre_process in utils.py  
-                    if prepend_question_token:
-                        questions = ["question: " + question for question in questions] 
+ 
                     if self.dataset_name == "nq":
                         questions = ["<s> " + q for q in questions]
                         # TODO: add them to arguments
@@ -414,17 +388,20 @@ class QAData(object):
                         for i in tqdm(range(len(questions))):
                             questions[i] += " <s> "  # mark the begining of passages
                             for p in self.passages.get_passages(i): # add passage one by one
-                                questions[i] += " <SEP> " + p["title"] + " <SEP> " + p["text"] # format: [CLS] question [SEP] title 1 [SEP] passages
+                                # format: [CLS] question [SEP] title 1 [SEP] passages
+                                questions[i] += self.spaced_sep_token + \
+                                    p["title"] + self.spaced_sep_token + p["text"]
                             # mark the begining of passages
                             questions[i] += " </s> "
                         questions_n_passages = questions  # rename
 
                     elif self.dataset_name == "ambig":
                         # TODO: add function pre_process in utils.py
-                        if prepend_question_token:
-                            questions = ["question: " +
-                                        question for question in questions]
-                        questions = [" <s> " + q for q in questions]
+                        if prepend_question_token:  # T5
+                            questions = ["<s> question: " +
+                                        question for question in questions] # t5 tokenizer doesn't have <s>
+                        else:
+                            questions = ["<s> " + q for q in questions]  # Bart
                         questions = [q + " </s> " for q in questions]
 
                                            
@@ -438,32 +415,13 @@ class QAData(object):
                             # add passage one by one
                             for p in self.passages.get_passages(i):
                                 # format: [CLS] question [SEP] title 1 [SEP] passages
-                                questions[i] += " <SEP> " + \
-                                    p["title"] + " <SEP> " + p["text"]
+                                questions[i] += self.spaced_sep_token  + \
+                                    p["title"] + self.spaced_sep_token + p["text"]
                             questions[i] += " </s> "
                         questions_n_passages = questions  # rename 
 
 
 
-
-
-
-                        # [(1,2,3,....36), (1,2,3,...,37)] -> [(1,2,3,...,10), (1,2,3,...,10)]
-                        # cur_answer = [answer[:num_answers_kept]
-                        #                 for answer in cur_answer]
-                        # cur_answer = itertools.product(*cur_answer)
-                        # cur_answer = [item for item in cur_answer]
-                        # if len(cur_answer) > 30:
-                        #     rnd_indices = np.random.choice(
-                        #         len(cur_answer), size=30, replace=False)
-                        #     cur_answer = [cur_answer[i]
-                        #                 for i in rnd_indices]
-                        # Q: do I have to discard QA pairs with incomplete answers which cannot be found in the passages?
-                        # Q: why would we want metadata?
-                        # Q: what's the resulting answers and metadata look like
-                        # [ [a, a'], [b, b'], [c, c'] ]   metadata: [(0,1), (1,2), (2,3)]
-                        #     - [[a <SEP> b <SEP> c] [a' <SEP> b' <SEP> c']]   and metadata [(0,1), (1,2)] as two acceptable answers.    len(product(*answer))
-                        # Q: offset is independent for each answer? Yes. it's locating answers for each QPA concatenation.
 
                         def is_answer_in_passages(answer_str, p_str):
                             """check the existance of answer in passages by comparing string
@@ -525,9 +483,11 @@ class QAData(object):
 
                             joined_answers = [answer for answer in itertools.product(*
                                 found_answers_for_one_question)]
-                            concatenated_answers = [" <SEP> ".join(
-                                answer) + " </s> " for answer in joined_answers]
-
+                            
+                            concatenated_answers = [self.sep_token.join(
+                                answer) for answer in joined_answers]
+                            concatenated_answers = [
+                                "<s>" + answer + "</s>" for answer in concatenated_answers]
                             # NOTE: add argument, num_k
                             max_num_of_answers = 100
                             if len(concatenated_answers) > max_num_of_answers:
@@ -541,10 +501,10 @@ class QAData(object):
                             new_metadata.append(
                                 (answer_start_idx, answer_end_idx))
                             new_questions.append(cur_qp_str) # even though I append the original QP string, but it will be trimmed in encode_plus
-                        
-                        metadata = new_metadata
                         questions = new_questions
-                        answers = new_answers
+                        metadata = new_metadata
+                        answers = new_answers 
+                        
 
         
                     self.logger.info(
@@ -554,7 +514,6 @@ class QAData(object):
                                                             max_length=self.args.max_input_length,
                                                             return_overflowing_tokens=True,
                                                             verbose=self.args.verbose)
-                    # import pdb; pdb.set_trace()
                     max_answer_length = 30
                     answer_input = tokenizer.batch_encode_plus(answers,
                                                                pad_to_max_length=True,
@@ -562,14 +521,19 @@ class QAData(object):
                                                                verbose=self.args.verbose)
                     # NOTE: uncomment dump_pickle                                                                                                                                                                 
                     dump_pickle(question_input, answer_input, metadata, encoded_input_path,
-                                 encoded_answer_path, metadata_path)
+                                encoded_answer_path, metadata_path)
 
                     input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
                     decoder_input_ids, decoder_attention_mask = answer_input["input_ids"], answer_input["attention_mask"]
-                    
+                    # if not self.is_training:
+                    #     decoder_input_ids=  None
+                    #     decoder_attention_mask = None
+                    #     metadata = None 
                     num_truncated_tokens = sum(question_input['num_truncated_tokens']) 
                     num_quesiton_ids = sum(  [ len(question) for question in  question_input['input_ids'] ] ) 
                     passage_coverage_rate =   num_quesiton_ids    / (num_truncated_tokens + num_quesiton_ids) 
+                    self.logger.info(
+                        logging_prefix + f"Number of truncated tokens: {num_truncated_tokens}")
                     self.logger.info(
                         logging_prefix + f"Passage coverage rate: {passage_coverage_rate * 100} %")
                 elif self.answer_type == "span":
@@ -613,7 +577,6 @@ class QAData(object):
                     print("Unrecognizable answer type")
                     exit()     
                 if self.load:
-                    print("stop before dumping")
                     with open(tokenized_path, "w") as fp:
                         if self.answer_type == "seq":
                             json.dump([input_ids, attention_mask,
@@ -689,12 +652,41 @@ class QAData(object):
         assert len(predictions)==len(self), (len(predictions), len(self))
         ems = []
         f1s = []
-        # from IPython import embed; embed()
 
         # TODO 
         if self.dataset_name == "ambig":
             if self.answer_type == "seq": 
-                raise NotImplementedError()
+                for (prediction, dp) in zip(predictions, self.data):
+                    cur_answer = []
+                    for qa_d in dp["annotations"]:
+                        if qa_d["type"] == "singleAnswer":
+                            cur_answer.extend(qa_d["answer"])
+                        elif qa_d["type"] == "multipleQAs":
+                            pair_answers = []
+                            for pair in qa_d["qaPairs"]:
+                                pair_answers.extend(pair["answer"])
+                            cur_answer.extend(pair_answers)
+                        else:
+                            self.logger.warn("error in qa_d type: ")
+                            exit()
+                    # predictions are lowercased
+
+
+                    # print("check answers and predictions and their f1 score to see if its reasonable")
+
+                    # if self.args.model.lower() == "t5":
+                    #     prediction = re.split("<extra_id_-[0-9]+>", prediction)
+                    #     prediction = prediction.strip(
+                    #         "<s>").strip("</s>").split(self.sep_token.lower())
+                    # elif self.args.model.lower() == "bart":
+                    #     prediction = re.split(
+                    #         self.sep_token.lower(), prediction)
+                    # else:
+                    #     raise NotImplementedError()
+                    prediction = prediction.strip(
+                        "<s>").strip("</s>").split(self.sep_token.lower())
+
+                    f1s.append(get_f1(cur_answer, prediction)) # NOTE: the only difference from span answer type
             else:
                 for (prediction, dp) in zip(predictions, self.data):
                     cur_answer = []
@@ -753,7 +745,7 @@ def normalize_answer(s):
 
 
 def get_exact_match(prediction, groundtruth):
-    if type(groundtruth)==list:
+    if type(groundtruth)==list: # for ambigQA answer input
         if len(groundtruth)==0:
             return 0
         return np.max([get_exact_match(prediction, gt) for gt in groundtruth])
@@ -766,7 +758,7 @@ def get_f1(answers, predictions, is_equal=get_exact_match):
     :answers: a list of list of strings
     :predictions: a list of strings
     '''
-    
+     
     assert len(answers)>0 and len(predictions)>0, (answers, predictions)
     occupied_answers = [False for _ in answers]
     occupied_predictions = [False for _ in predictions]
@@ -784,15 +776,6 @@ def get_f1(answers, predictions, is_equal=get_exact_match):
         return 0
     return 2*a*b/(a+b)
 
-# def get_exact_match(prediction, groundtruth):
-#     if type(groundtruth)==list:
-#         if len(groundtruth)==0:
-#             return 0
-#         return np.max([get_exact_match(prediction, gt) for gt in groundtruth])
-#     return (normalize_answer(prediction) == normalize_answer(groundtruth))
-
-
-
 
 class QAGenDataset(Dataset):
     def __init__(self,
@@ -809,7 +792,6 @@ class QAGenDataset(Dataset):
         self.out_metadata = list(zip(range(len(decoder_input_ids)), range(1, 1+len(decoder_input_ids)))) \
             if out_metadata is None else out_metadata
         self.is_training = is_training
-
         assert len(self.input_ids)==len(self.attention_mask)==self.in_metadata[-1][-1]
         assert len(self.decoder_input_ids)==len(self.decoder_attention_mask)==self.out_metadata[-1][-1]
 
@@ -938,8 +920,6 @@ class topKPassasages():
                     token_presence = [int(any([normalize_answer(_answer_token) in passages_str for _answer_token in answer_token])) for answer_token in answer ] 
                     cur_recall = sum(token_presence)/len(token_presence)
                     answers_recall.append(cur_recall)
-                # print("answers_recall", answers_recall)
-                # print("max answers recall", max(answers_recall))
                 top_k_passages_recall[k].append(max(answers_recall))
 
         for k in [1,5,10,100]:

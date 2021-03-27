@@ -292,13 +292,17 @@ class MyT5(T5ForConditionalGeneration):
 
         self.gradient_cp = False
 
-
+        
         # overwrite default T5stack class if gradient_cp is True
         if self.gradient_cp:
             self.encoder = T5StackCP(self.config, self.shared)
             self.decoder = T5StackCP(self.config, self.shared)
             self.init_weights()
+        self.is_ambig = False
 
+    def set_ambig(self, threshold=0.1):
+        self.is_ambig = True
+        
     def forward(self, input_ids = None,
                 attention_mask = None,
                 encoder_outputs = None,
@@ -345,15 +349,6 @@ class MyT5(T5ForConditionalGeneration):
                 decoder_input_ids = None
 
 
-        # NOTE: not sure if these  variables are needed
-        # head_mask=None,
-        # decoder_head_mask=None,
-        # inputs_embeds=None,
-        # decoder_inputs_embeds=None,
-        # output_attentions=None,
-        # output_hidden_states=None,
-        # return_dict=None,
-             
             outputs = super(MyT5, self).forward(
                 input_ids,
                 attention_mask=attention_mask,
@@ -367,16 +362,7 @@ class MyT5(T5ForConditionalGeneration):
                 return_dict=True,
                 use_cache=use_cache,  
             ) # as the current forward function overwriting the parent function, so we have to use suepr()
-            # import pdb;pdb.set_trace()
-            # T5 doesn't have bias = self.final_logits_bias
-            # lm_logits = F.linear(outputs[0], self.shared.weight) # bias=self.final_logits_bias)
-            # loss, lm_logits, _ = outputs 
-            # output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
-            # return ((loss,) + output) if loss is not None else output
             if is_training:
-                # loss_fct = nn.CrossEntropyLoss(reduction="sum", ignore_index=self.config.pad_token_id)
-                # loss = loss_fct(lm_logits.view(-1, self.config.vocab_size),
-                #                 decoder_input_ids.view(-1))
                 return outputs.loss
             return outputs
 

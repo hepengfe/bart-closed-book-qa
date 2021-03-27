@@ -17,20 +17,15 @@ from tqdm import tqdm
 
 def run(args, logger):
 
+
+    # load tokenizer
     if args.predict_type.lower() == "spanseqgen":
         if args.model.lower() == "bart":
             tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
-            # tokenizer = BartTokenizer.from_pretrained("bart-large")
-            # import pdb
-            # pdb.set_trace()
         elif args.model.lower() == "t5":
             # tokenizer = T5Tokenizer.from_pretrained("t5-large")
             tokenizer = T5Tokenizer.from_pretrained("t5-base")
-            # import pdb; pdb.set_trace()
-        #     bos_token_id = self.tokenizer.bos_token_id
-        # eos_token_id = self.tokenizer.eos_token_id
-        # pad_token_id = self.tokenizer.pad_token_id
-        # sep_token_id = self.tokenizer.convert_tokens_to_ids(self.SEP)
+
         else:
             print("wrong model argument")
             exit()
@@ -45,6 +40,19 @@ def run(args, logger):
     else:
         print("wrong argument: ",  args.predict_type.lower())
         exit()
+
+
+
+    if args.model.lower() == "bart" or args.model.lower() == "t5":
+        logger.info("Add <sep> token into tokenizer")
+        # add extra token for BART
+        tokenizer.add_tokens(["<SEP>"], special_tokens=True)
+        if tokenizer.bos_token_id == None:
+            tokenizer.add_tokens(["<s>"], special_tokens=True)
+
+
+
+
 
     if args.do_tokenize:
         # during the process train_data will be overwritten, so memory will be collected
@@ -87,26 +95,14 @@ def run(args, logger):
             dev_data_prefix = "[DEV DATA]\t" 
         logger.info(dev_data_prefix +"Start loading...")
         logger.info(dev_data_prefix + f"batch size {args.predict_batch_size}")
-        # if args.debug:
-        #     logger.info(dev_data_prefix + "[DEBUG MODE]: load train data as dev data")
-        #     dev_data = train_data
-        # else:
-        # import pdb; pdb.set_trace()
+
         dev_data.load_dataset(tokenizer)
         dev_data.load_dataloader()
-        # dev_data.load_dataset(tokenizer)
-        # dev_data.load_dataloader() 
-        # for i, batch in enumerate(train_data.dataloader):
-        #     import pdb; pdb.set_trace()
-        #     break
-        # print("test dev data")
-        # for i, batch in enumerate(dev_data.dataloader):
-        #     import pdb; pdb.set_trace()
-        #     break
+
     model_prefix = f"[{args.model.upper()}]\t"
     if args.checkpoint is not None:
-        
-        if args.checkpoint.endswith(".pt"):
+
+        if args.checkpoint.endswith(".pt"): # load old type of checkpoint
             logger.info(f"{model_prefix}Load old model with pt data format")
             def convert_to_single_gpu(state_dict):
                 def _convert(key):
@@ -122,30 +118,24 @@ def run(args, logger):
                 # config.gradient_checkpointing = args.gradient_cp
                 config = BartConfig.from_pretrained("facebook/bart-large")
                 logger.warn("Due to the previously added token, here I manually add one on config vocab size")
+                # NOTE: old checkpoint doesn't save config, so it needs reload from scratch and modify 
                 config.vocab_size += 1
-
-                # # the other way is to save a bart-large file with resize token size 
-                # model = MyBart.from_pretrained(args.checkpoint, config = config)
-                # model = MyBart.from_pretrained(None,
-                #     state_dict=convert_to_single_gpu(torch.load(args.checkpoint)), config = config)
-
+                config.gradient_checkpointing = args.gradient_cp
                 model = MyBart.from_pretrained(None,
                                                 state_dict=convert_to_single_gpu(torch.load(args.checkpoint)), config = config)
 
             elif args.model.lower() == "t5":
-                # config = T5Config.from_pretrained(args.checkpoint)
-                # if args.gradient_cp:
-                #     logger.warn("T5 gradient checkpoint hasn't been implemented")
-                #     args.gradient_cp = False
-                # config.gradient_checkpointing = args.gradient_cp
-                # model = MyT5.from_pretrained('t5-large')
-                # model =  MyT5.from_pretrained(args.checkpoint)
-                model = MyT5.from_pretrained('t5-base', state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
 
+                config = BartConfig.from_pretrained("t5-base")
+                config.vocab_size += 2
+                config.gradient_checkpointing = args.gradient_cp
+                model = MyT5.from_pretrained(None, 
+                                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)), config = config)
+                logger.warn(
+                    "Due to the previously added token, here I manually add one on config vocab size")
+                
             elif args.model.lower() == "bert":
-                # config = BertConfig.from_pretrained(args.checkpoint)
-                # config.gradient_checkpointing = args.gradient_cp
-                # model =  BertSpanPredictor.from_pretrained(args.checkpoint)
+                
                 model = BertSpanPredictor.from_pretrained(
                     "bert-base-uncased", state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
             elif args.model.lower() == "electra":
@@ -158,7 +148,8 @@ def run(args, logger):
 
                 print("wrong model argument: ", args.model.lower())
                 exit() 
-        else:
+        else: # load the new type of checkpoint
+            logger.info(f"{model_prefix}Load checkpoint model")
             if args.model.lower() == "bart":
                 # TODO: add flag that when there is more specialized token,
                 # NOTE: it serves a template to 
@@ -169,28 +160,18 @@ def run(args, logger):
 
                 # the other way is to save a bart-large file with resize token size 
                 model = MyBart.from_pretrained(args.checkpoint, config = config)
-                # model = MyBart.from_pretrained(None,
-                #     state_dict=convert_to_single_gpu(torch.load(args.checkpoint)), config = config)
-
-                # model = MyBart.from_pretrained("bart-large",
-                #                                state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
-
             elif args.model.lower() == "t5":
                 config = T5Config.from_pretrained(args.checkpoint)
                 if args.gradient_cp:
                     logger.warn("T5 gradient checkpoint hasn't been implemented")
                     args.gradient_cp = False
                 config.gradient_checkpointing = args.gradient_cp
-                # model = MyT5.from_pretrained('t5-large')
-                model =  MyT5.from_pretrained(args.checkpoint)
-                # model = MyT5.from_pretrained('t5-base', state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
+                model =  MyT5.from_pretrained(args.checkpoint, config = config)
 
             elif args.model.lower() == "bert":
                 config = BertConfig.from_pretrained(args.checkpoint)
                 config.gradient_checkpointing = args.gradient_cp
                 model =  BertSpanPredictor.from_pretrained(args.checkpoint, config = config)
-                # model = BertSpanPredictor.from_pretrained(
-                #     "bert-base-uncased", state_dict=convert_to_single_gpu(torch.load(args.checkpoint)))
             elif args.model.lower() == "electra":
                 config = ElectraConfig.from_pretrained(args.checkpoint)
                 config.gradient_checkpointing = args.gradient_cp
@@ -203,23 +184,19 @@ def run(args, logger):
         is_ambig = True
         if args.model.lower() == "bert" or args.model.lower() == "electra":
             model.set_ambig(args.threshold)  # as it only affects generating, we set the class variable here
+        else:
+            model.set_ambig()
+
     if args.do_train:
-        # if args.checkpoint is not None:
-        #     logger.info(f"Found checkpoint, loading pretrained model: [{args.model}] at {args.checkpoint}")
-
-
         if args.checkpoint is None:
             logger.info(f"{model_prefix}gradient checkpoint mode:  {args.gradient_cp}")
             logger.info(f"{model_prefix}Loading pre-trained model ")
             # spanseqgen
             if args.predict_type.lower() == "spanseqgen":
                 if args.model.lower() == "bart":
-                    # default_config = BartConfig.from_pretrained("bart-large")
-                    # config = BartConfig.from_pretrained("bart-large", vocab_size = default_config.vocab_size + 1 )
-
                     config = BartConfig.from_pretrained("facebook/bart-large")
                     config.gradient_checkpointing = args.gradient_cp
-                    
+                    config.vocab_size += 1
                     model = MyBart.from_pretrained("facebook/bart-large", config=config)
 
                     # The new vector is added at the end of the embedding matrix
@@ -227,14 +204,15 @@ def run(args, logger):
                     # as there is new token <SEP>
                     model.resize_token_embeddings(len(tokenizer))
 
-                    # model.model.shared.weight[-1, :] = torch.zeros([model.config.hidden_size])
+                    # model.shared.weight[-1, :] = torch.zeros([model.config.hidden_size])
 
                 elif args.model.lower() == "t5":
                     # model = MyT5.from_pretrained('t5-large')
                     config = T5Config.from_pretrained('t5-base')
-
+                    config.vocab_size += 2
                     config.gradient_checkpointing = args.gradient_cp
                     model = MyT5.from_pretrained('t5-base')
+                    model.resize_token_embeddings(len(tokenizer))
                 else:
                     print("wrong model argument")
                     exit()
@@ -278,6 +256,8 @@ def run(args, logger):
         logger.info(f"{model_prefix}model parallelism status: {model.is_model_parallel}")
         model.to(torch.device(args.device))
 
+
+        # training schedule and optimizer
         no_decay = ['bias', 'LayerNorm.weight']
         optimizer_grouped_parameters = [
             {'params': [p for n, p in model.named_parameters() if not any(
@@ -290,21 +270,16 @@ def run(args, logger):
         scheduler = get_linear_schedule_with_warmup(optimizer,
                                                     num_warmup_steps=args.warmup_steps,
                                                     num_training_steps=100000)
+
+
+        # start trianing
         train(args, logger, model, train_data, dev_data, optimizer, scheduler)
     
 
     
     if args.do_predict:
         logger.info(f"[{args.model}] start prediction")
-        # checkpoint = os.path.join(args.output_dir, 'best-model.pt')
-
-        
-        # model = MyBart.from_pretrained(args.check_point)
-        # logger.info("Loading checkpoint model from {}".format(checkpoint))
-        # if args.single_gpu:
         model.to(torch.device(args.device))
-        # elif torch.cuda.is_available():
-        #     model.to(torch.device("cuda"))
         model.eval()
         ems = inference(args, model, dev_data, args.predict_type,
                         device=args.device, is_ambig = is_ambig, save_predictions=True)
@@ -364,29 +339,18 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 loss = model(input_ids=batch[0], attention_mask=batch[1],
                              decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
                              is_training=True)
+                # # import pdb;
+                # # pdb.set_trace()
+                # # output = model(input_ids=batch[0], attention_mask=batch[1],
+                # #              decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
+                # #              is_training=False)
+                # print("check decoder input ids and input ids, check outputs without training mode as well")
+                
             elif args.predict_type.lower() == "spanextraction":
                 loss = model(input_ids=batch[0],  attention_mask=batch[1],
                              token_type_ids=batch[2],
                              start_positions=batch[3], end_positions=batch[4], answer_mask=batch[5],
                              is_training=True)
-                            #     loss = model(input_ids=batch[0],  attention_mask=batch[1],
-                            #  token_type_ids=batch[2],
-                            #  start_positions=batch[3], end_positions=batch[4],
-                            #  is_training=True)
-    #             def forward(
-    #     self,
-    #     input_ids=None,
-    #     attention_mask=None,
-    #     token_type_ids=None,
-    #     position_ids=None,
-    #     head_mask=None,
-    #     inputs_embeds=None,
-    #     start_positions=None,
-    #     end_positions=None,
-    #     output_attentions=None,
-    #     output_hidden_states=None,
-    #     return_dict=None,
-    # )
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu.
@@ -405,11 +369,10 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 scheduler.step()
                 model.zero_grad()
 
-            # import pdb; pdb.set_trace() # check Training VRAM
+
+            # eval
             if global_step % args.eval_period == 0:
                 model.eval()
-                # import pdb
-                # pdb.set_trace()
                 logger.info(f"Start evaluating at global step {global_step}")
                 curr_em = inference(args, get_model(model, args.device), dev_data,
                                     args.predict_type, device=args.device, is_ambig=get_model(model, args.device).is_ambig, save_predictions=True)
@@ -422,10 +385,6 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 epoch_ems[epoch] = str(curr_em*100)
                 train_losses = []
                 if best_accuracy < curr_em:
-                    # model_state_dict = {k: v.cpu()
-                    #                     for (k, v) in model.state_dict().items()}
-                    # torch.save(model_state_dict, os.path.join(
-                    #     args.output_dir, "best-model.pt"))
                     get_model(model, args.device).save_pretrained(args.output_dir)
                     checkpoint_stat["best_epoch"] = epoch
                     checkpoint_stat["best_em_accuracy"] = curr_em
@@ -458,11 +417,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
     if predict_type.lower() == "spanseqgen":
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-            
-            # if torch.cuda.is_available():
             batch = [b.to(device) for b in batch]
-            # import pdb;pdb.set_trace()
-            # print("reduce some variables")
             
             outputs = model.generate(input_ids=batch[0],
                                      attention_mask=batch[1],
@@ -477,7 +432,9 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
             # TODO: if it's logits then use decode function in span utils
             for input_, output in zip(batch[0], outputs):
+                
                 pred = dev_data.decode(output)
+                print("check prediction: ", pred)
                 predictions.append(pred)
     elif predict_type.lower() == "spanextraction":
         all_start_logits = []
@@ -486,8 +443,6 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
         all_input_data = []
 
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-            # if torch.cuda.is_available():
-           
             batch = [b.to(device) for b in batch]
             qa_outputs = model(input_ids=batch[0], attention_mask=batch[1],
                                              token_type_ids=batch[2], inputs_embeds=None,

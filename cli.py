@@ -12,68 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
 
----------- (meeting debug) finetuning: bert
-python cli.py \
-        --model bert \
-        --checkpoint  out/saved/nq-bert-closed-qa/ \
-        --do_train --output_dir out/ambig-bert-closed-qa \
-        --train_file data/ambigqa/ambigqa_train.json \
-        --predict_file data/ambigqa/ambigqa_dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanExtraction \
-        --device  cuda \
-        --gradient_cp \
-        --max_input_length 512 \
-        --top_k_passages 5 \
-        --top_k_answers 5 \
-        --eval_period 1 \
-        --ranking_folder_path data/reranking_results/ambigqa \
-        --data_folder_path data/ambigqa \
-        --passages_path data/wiki/psgs_w100_20200201.tsv \
-        --fine_tune --verbose
------------ (meeting debug) train bart   (updated)
-python cli.py \
-        --model bart \
-        --do_train --output_dir out/nq-bart-closed-qa \
-        --train_file data/nqopen/nqopen-train.json \
-        --predict_file data/nqopen/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanSeqGen \
-        --device cuda \
-        --max_input_length 750 \
-        --top_k_passages 5 \
-        --eval_period 1 \
-        --ranking_folder_path data/reranking_results/nqopen \
-        --data_folder_path data/nqopen \
-        --passages_path data/wiki/psgs_w100.tsv \
-        --verbose --debug
-------------------  (OOM for large test_bs)
-python cli.py \
-        --model bert \
-        --do_train --output_dir out/nq-bert-closed-qa \
-        --train_file  data/nqopen/nqopen-train.json  \
-        --predict_file data/nqopen/nqopen-dev.json \
-        --train_batch_size ${train_bs} \
-        --predict_batch_size ${test_bs} \
-        --predict_type  SpanExtraction \
-        --device cuda \
-        --max_input_length 512 \
-        --top_k_passages 5 \
-        --eval_period 1 \
-        --ranking_folder_path data/reranking_results/nqopen \
-        --data_folder_path data/nqopen \
-        --passages_path data/wiki/psgs_w100.tsv \
-        --verbose --gradient_cp
-
-------------------- 
-
-
-1. test if bart can handle same train_bs and test_bs
-"""
 
 
 from __future__ import absolute_import
@@ -204,9 +143,6 @@ def main():
     args.single_gpu = False
     if args.device == "cuda":  # use all gpus by default
         args.n_gpu = torch.cuda.device_count()
-
-        # args.device = "cuda"
-
     elif args.device == "cpu":
         args.device = "cpu"
     else:
@@ -214,8 +150,6 @@ def main():
         args.device = int(args.device)
         args.n_gpu = 1
 
-    # if args.n_gpu > 0:
-    #     torch.cuda.manual_seed_all(args.seed)
     if not args.do_train and not args.do_predict and not args.do_tokenize:
         raise ValueError(
             "At least one of `do_train` or `do_predict` or `do_tokenize` must be True.")
