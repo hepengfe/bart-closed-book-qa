@@ -8,7 +8,7 @@ import json
 from transformers import BartTokenizer, BartConfig, T5Tokenizer, T5Config, BertConfig, BertTokenizer , ElectraConfig,  ElectraTokenizer,  ElectraForQuestionAnswering
 from transformers import AdamW, get_linear_schedule_with_warmup
 
-from data import QAData
+from data2 import QAData
 from bart import MyBart 
 from T5 import MyT5
 from tqdm import tqdm

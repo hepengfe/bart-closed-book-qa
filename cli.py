@@ -118,11 +118,19 @@ def main():
     parser.add_argument("--eval_recall", default=False)
     parser.add_argument("--threshold", type=int, default=0.1)
 
+
+    # passage clustering
+    parser.add_argument("--passage_clustering",
+                        default=False, action="store_true")
+
+
     args = parser.parse_args()
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         print("Output directory () already exists and is not empty.")
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir, exist_ok=True)
+    
+    
 
     # Start writing logs
 

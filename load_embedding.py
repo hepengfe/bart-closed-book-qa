@@ -12,6 +12,9 @@
 # in this way, we basically considered all passages and set thresholding to filter out them
 
 
+
+# dataset requirement:  one question generate c QP concatenation -> and all QP concatenation for checking answer coverage
+
 if __name__ == "__main__":
     import pickle
     embedding_path = "data/wiki_embeddings/"
