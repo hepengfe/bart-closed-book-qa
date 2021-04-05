@@ -64,6 +64,7 @@ class QAData(object):
             self.data = json.load(f)
         if type(self.data) == dict:
             self.data = self.data["data"]
+        self.processed_data = None
         if args.debug and self.is_training == False:
             logger.warn("[DEBUG MODE] Load all dev data")
             self.data = self.data[:]
@@ -104,6 +105,7 @@ class QAData(object):
 
         self.dataset_name = None  # ambig or nq
         self.passages = None
+        
         
 
         # idea of naming detection is finding the folder name
@@ -436,7 +438,11 @@ class QAData(object):
                                     p["title"] + self.spaced_sep_token + p["text"]
                             # mark the begining of passages
                             questions[i] += " </s> "
-                        questions_n_passages = questions  # rename
+                        
+                        # NOTE: no need to rename
+                        # questions_n_passages = questions  # rename
+                        # new_questions = questions  # rename
+
 
                     elif self.dataset_name == "ambig":  # ambig seq answer
                         # TODO: add function pre_process in utils.py
@@ -475,11 +481,12 @@ class QAData(object):
                                             self.spaced_sep_token + p["text"]
                                 all_qp_concatenation += " </s> "
 
-                                cluster_qp_concatenation = questions[i]
+                                # cluster_qp_concatenation = questions[i]
                                 
                                 questions_with_clustered_passages.append([]) 
                                 questions_with_clustered_passages[i].append(all_qp_concatenation)
                                 for p_cluster in clusters_passages:
+                                    cluster_qp_concatenation = questions[i] # reset qp concatenation
                                     cluster_qp_concatenation += " <s> "
                                     start = True
                                     for p in p_cluster:
@@ -497,7 +504,7 @@ class QAData(object):
 
                                 # mark the begining of passages
                                 questions_n_passages = questions_with_clustered_passages
-                            else:
+                            else: # non-clustering
                                 questions_n_passages = questions
                                 questions_n_passages[i] += " <s> " # start of passages
                                 # add passage one by one
@@ -603,12 +610,12 @@ class QAData(object):
 
                             
                             
-                            if self.is_training : # add answers separately for each clusters
+                            # NOTE: for regular training mode(no passage clustering), we still add answers for every question
+                            if self.is_training and self.args.passage_clustering : # add answers separately for each clusters for training + passage clustering mode
                                 # new type of 
                                 # is_training -> seprate pairs of QP and A
                                 # not is_training -> combine as we used to do
                                 for cur_qp_str in cur_qp[1:]:
-                                    from  IPython import embed; embed()
                                     found_answers_for_one_qp = []
                                     # check answer presence in all answers 
                                     # add presented answers into answer 
@@ -619,11 +626,13 @@ class QAData(object):
                                             # acceptable answers for one qa pair
                                             answer_for_qa_pair = answers[start:end]
                                             for cur_a_str in answer_for_qa_pair:
-                                                if is_answer_in_passages(cur_qp_str, p_str):
+                                                if is_answer_in_passages(cur_a_str, cur_qp_str):
                                                     found_answer_for_qa_pair.append(
                                                         cur_a_str)
                                         if len(found_answer_for_qa_pair) > 0:
                                             found_answers_for_one_qp.append(found_answer_for_qa_pair)
+                                    if len(found_answer_for_qa_pair) == 0:
+                                        continue
                                     # concatenate qp's answers 
                                     cur_answers = concatenate_answers(
                                         found_answers_for_one_qp)
@@ -639,10 +648,14 @@ class QAData(object):
                                     question_end_idx = len(new_questions)
 
                                     question_metadata.append(
-                                        (question_start_idx, question_end_idx))
+                                        (question_start_idx, question_end_idx)) # we actually added just a qp pair
                                     answer_metadata.append(
                                         (answer_start_idx, answer_end_idx))
+                                # self.processed_data = [
+                                #     dict() for _ in range(len(new_answers))]
 
+                                # for (idx, concat_answer) in enumerate(new_answers):
+                                #     self.processed_data[i]["answers"] = concat_answer
 
                             else: # add concatenation of answers in eval dataset
                                 joined_answers = [answer for answer in itertools.product(*
@@ -665,12 +678,17 @@ class QAData(object):
                                 new_answers.extend(cur_answers)
                                 answer_end_idx = len(new_answers)
 
-
+                                # import pdb; pdb.set_trace()
+                                # print("check quesiton metadata")
                                 question_start_idx = len(new_questions)
                                 if self.args.passage_clustering:
+                                    # check cluster passages 
                                     new_questions.extend(cur_qp[1:])
+                                    
                                 else:
                                     new_questions.append(cur_qp_str)
+                                # import pdb; pdb.set_trace()
+                                # print("check first new_questions ")
                                 question_end_idx = len(new_questions)
 
                                 question_metadata.append(
@@ -678,18 +696,29 @@ class QAData(object):
                                 answer_metadata.append(
                                     (answer_start_idx, answer_end_idx))
                                 # even though I append the original QP string, but it will be trimmed in encode_plus
-                            
+                                # self.processed_data = [
+                                #     dict() for _ in range(len(new_answers))]
+
+                                # for (idx, concat_answer) in enumerate(new_answers):
+                                #     self.data[i]["answers"] = concat_answer
+                        self.processed_data = [
+                                    dict() for _ in range(len(new_answers))]
+
                         for (idx, concat_answer) in enumerate(new_answers):
-                            self.data[i]["answers"] = concat_answer
+                            self.processed_data[i]["answers"] = concat_answer
+
+                        # NOTE: for some reason rename doesn't succeed after indenting one more level
+                        print("rename questions and answers")
                         questions = new_questions
                         answers = new_answers
                         # import pdb; pdb.set_trace()
-                        print("check some qp concatenation and answers to see if the clustering is working")
                         print("answers example: ", answers[:10])
-                        print("ans")
+
 
                     self.logger.info(
-                        logging_prefix + "Start encoding questions and answers, this might take a while")
+                        logging_prefix + f"Start encoding questions ({len(questions)}) and answers, this might take a while")
+                    import pdb; pdb.set_trace()
+                    print("check questions again if see if the first two is the same question")
                     question_input = tokenizer.batch_encode_plus(questions,
                                                                  pad_to_max_length=True,
                                                                  max_length=self.args.max_input_length,
@@ -763,15 +792,16 @@ class QAData(object):
                 if self.load:
                     with open(tokenized_path, "w") as fp:
                         if self.answer_type == "seq":
-                            json.dump([input_ids, attention_mask,
+                            json.dump([input_ids, question_metadata, attention_mask,
                                        decoder_input_ids, decoder_attention_mask,
-                                       metadata, passage_coverage_rate], fp)
+                                       answer_metadata, passage_coverage_rate], fp)
                         elif self.answer_type == "span":
                             json.dump([input_ids, attention_mask, token_type_ids, start_positions,
                                        end_positions, answer_mask, answer_coverage_rate], fp)
 
         # loading dataset
         if self.answer_type == "seq":
+            
             self.dataset = QAGenDataset(input_ids, attention_mask,
                                         decoder_input_ids, decoder_attention_mask,
                                         passage_clustering=self.args.passage_clustering,
@@ -843,7 +873,7 @@ class QAData(object):
         # TODO
         if self.dataset_name == "ambig":
             if self.answer_type == "seq":
-                for (prediction, dp) in zip(predictions, self.data):
+                for (prediction, dp) in zip(predictions, self.processed_data):
                     cur_answers = dp["answers"] 
                     # for qa_d in dp["annotations"]:
                     #     if qa_d["type"] == "singleAnswer":
@@ -866,7 +896,7 @@ class QAData(object):
                     # NOTE: the only difference from span answer type
                     f1s.append(max_f1)
             else:
-                for (prediction, dp) in zip(predictions, self.data):
+                for (prediction, dp) in zip(predictions, self.processed_data):
                     cur_answer = []
                     for qa_d in dp["annotations"]:
                         if qa_d["type"] == "singleAnswer":
@@ -993,13 +1023,15 @@ class QAGenDataset(Dataset):
                 # import pdb; pdb.set_trace()
                 # print("expect idx to be a range of indices of correct answers")
                 # return a list of QP and attention mask
-                input_ids_list = [self.input_ids[idx] for idx in indices]
-                attention_mask = [self.attention_mask[idx] for idx in indices]
+                input_ids_list = [self.input_ids[idx] for idx in range(*indices)]
+                attention_mask = [self.attention_mask[idx]
+                                  for idx in range(*indices)]
                 assert type(
                     input_ids_list) == list, "input_ids_list should be 2 d: " + str(input_ids_list)
                 # normalized_indices = 
                 return input_ids_list, attention_mask, indices
             else:
+                
                 idx = self.in_metadata[idx][0]
                 return self.input_ids[idx], self.attention_mask[idx], None
 
@@ -1018,6 +1050,7 @@ class MyDataLoader(DataLoader):
         else:
             # sampler = RandomSampler(dataset)
             sampler = SequentialSampler(dataset)
+            # TODO: add forcing change predict batch size
             batch_size = args.predict_batch_size
         super(MyDataLoader, self).__init__(
             dataset, sampler=sampler, batch_size=batch_size)
@@ -1128,9 +1161,10 @@ class topKPassasages():
             assert len(cluster_passages) > 0 and len(cluster_passages) <= 5, "each cluster should have more than one passages and less than five passages"
             passages.append(cluster_passages)
         assert len(passages) >= 1, "There should be more than one cluster"
-        num_passages = sum(num_cluster_passages_l)
         num_cluster_for_question_i = len(num_cluster_passages_l)
-        return passages, num_cluster_for_question_i, num_passages
+        num_selected_cluster_passages_for_question_i = sum(num_cluster_passages_l)
+        
+        return passages, num_cluster_for_question_i, num_selected_cluster_passages_for_question_i
 
 
     def get_passages(self, i):
@@ -1165,12 +1199,11 @@ class topKPassasages():
     def load_passage_embeddings(self, embedding_path):
         import pickle
         embedding_data = [] # embedding can be accessed by simply using passage id
-        
+        print("Loading embedding...")
         # NOTE: for debugging purpose, here we only load 20 passage embedding files
-        for i in range(50):
+        for i in tqdm(range(50)):
             with open(embedding_path + f'wiki2020embedding_{i}.pkl', 'rb') as f:
                 embedding_data.extend(pickle.load(f))
-                print(i, ": ", len(embedding_data))
         return embedding_data
 
     def load_passages(self, passages_path):

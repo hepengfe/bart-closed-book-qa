@@ -14,6 +14,8 @@
 # limitations under the License.
 
 
+# TODO: free memory of training data after dumping and load again after process eval data
+# TODO: load embedding once
 
 from __future__ import absolute_import
 from __future__ import division
