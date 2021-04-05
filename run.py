@@ -417,25 +417,54 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
     if predict_type.lower() == "spanseqgen":
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-            batch = [b.to(device) for b in batch]
             
-            outputs = model.generate(input_ids=batch[0],
-                                     attention_mask=batch[1],
-                                     num_beams=dev_data.args.num_beams,
-                                     max_length=dev_data.args.max_output_length,
-                                     early_stopping=True,
-                                     )
-            
+            if not args.passage_clustering:
+                batch = [b.to(device) for b in batch]
+                # TODO: check what batch[0] represents 
+                
+                outputs = model.generate(input_ids=batch[0],
+                                        attention_mask=batch[1],
+                                        num_beams=dev_data.args.num_beams,
+                                        max_length=dev_data.args.max_output_length,
+                                        early_stopping=True,
+                                        )
+                # TODO: if it's logits then use decode function in span utils
+                for input_, output in zip(batch[0], outputs):
+
+                    pred = dev_data.decode(output)
+                    print("check prediction: ", pred)
+                    predictions.append(pred)
+            else:
+                # bs x 2 (input id, attention) x #clusters
+                output_metadata = []
+                outputs = []
+                
+                for bb in batch: # conisder bb as small batch for one question
+                    _bb = [b.to(device) for b in bb]
+                    if len(_bb[0].size()) == 1:
+                        # import pdb; pdb.set_trace()
+                    # print(len(bb[0].size()))
+                        _bb[0] = _bb[0].unsqueeze(0)  
+                        _bb[1] = _bb[1].unsqueeze(0)
+                    outputs_for_one_question = model.generate(input_ids=_bb[0],
+                                            attention_mask=_bb[1],
+                                            num_beams=dev_data.args.num_beams,
+                                            max_length=dev_data.args.max_output_length,
+                                            early_stopping=True,
+                                            )
+                    outputs.append(outputs_for_one_question)
+
+                for outputs_for_one_question in outputs:
+                    pred = [dev_data.decode(output) for output in outputs_for_one_question]
+                    pred = "<sep>".join(pred)
+                    print("check prediction: ", pred)
+                    predictions.append(pred)
+                
             # outputs = model.generate(input_ids=batch[0] )
             # Q: span efxtraction: what it generates?
             # overwrite bert generate function
 
-            # TODO: if it's logits then use decode function in span utils
-            for input_, output in zip(batch[0], outputs):
-                
-                pred = dev_data.decode(output)
-                print("check prediction: ", pred)
-                predictions.append(pred)
+
     elif predict_type.lower() == "spanextraction":
         all_start_logits = []
 

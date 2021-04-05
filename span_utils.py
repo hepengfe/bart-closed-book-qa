@@ -13,12 +13,19 @@ import re
 import torch
 import scipy
 from scipy.special import log_softmax
-def dump_pickle(input_data, answer_data, metadata, encoded_input_path, encoded_answer_path, metadata_path):
+
+
+def dump_pickle(input_data, question_metadata, answer_data, metadata, encoded_input_path, encoded_answer_path, metadata_path):
+    metadata_path
+    question_metadata_path = metadata_path.replace("metadata", "question_metadata")
+    answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
     with open(encoded_input_path, "wb") as fp:
         pickle.dump(input_data, fp)
+    with open(question_metadata_path, "wb") as fp:
+        pickle.dump(question_metadata, fp)
     with open(encoded_answer_path, "wb") as fp:
         pickle.dump(answer_data, fp) 
-    with open(metadata_path, "wb") as fp:
+    with open(answer_metadata_path, "wb") as fp:
         pickle.dump(metadata, fp)
 
 
@@ -47,17 +54,26 @@ def load_pickle(encoded_input_path, encoded_answer_path, metadata_path):
     Returns:
         [type]: [description]
     """
+    question_metadata_path = metadata_path.replace(
+        "metadata", "question_metadata")
+    answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
     with open(encoded_input_path, "rb") as fp:
         input_data = pickle.load(fp)
     with open(encoded_answer_path, "rb") as fp:
         answer_data = pickle.load(fp)
-    with open(metadata_path, "rb") as fp:
-        metadata = pickle.load(fp)
-    return input_data, answer_data, metadata
+    if os.path.exists(question_metadata_path):
+        with open(question_metadata_path, "rb") as fp:
+            question_metadata = pickle.load(fp)
+    else:
+        question_metadata = None 
+    with open(answer_metadata_path, "rb") as fp:
+        answer_metadata = pickle.load(fp)
+    return input_data, question_metadata, answer_data, answer_metadata
 
 
 def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path, logger,  tokenizer, max_input_length, max_n_answers=1, questions=None, answers=None, metadata=None, all_titles=None, all_passages=None,
                is_training = True):
+    
     """
 
 
