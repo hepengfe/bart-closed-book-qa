@@ -126,6 +126,11 @@ def main():
                         default=False, action="store_true")
 
 
+    # reset parameters
+    parser.add_argument("--retokenize", default=False, action="store_true")
+    parser.add_argument("--reencode", default=False, action="store_true")
+
+
     args = parser.parse_args()
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         print("Output directory () already exists and is not empty.")

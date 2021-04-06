@@ -416,8 +416,10 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
     bos_token_id = dev_data.tokenizer.bos_token_id
 
     if predict_type.lower() == "spanseqgen":
+        from collections import defaultdict
+        # {question_idx : [pred_str1, pred_str2]}
+        prediction_dict = defaultdict(lambda :[])
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-            
             if not args.passage_clustering:
                 batch = [b.to(device) for b in batch]
                 
@@ -438,58 +440,88 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 # bs x 2 (input id, attention) x #clusters
                 # output_metadata = []
                 outputs = []
+
+
+                input_ids=batch[0]
+                attention_mask=batch[1]
+                question_ids = batch[2]
+                input_ids = input_ids.to(device)
+                attention_mask = attention_mask.to(device)
+
+                outputs = model.generate(input_ids=input_ids,
+                                         attention_mask=attention_mask,
+                                         num_beams=dev_data.args.num_beams,
+                                         max_length=dev_data.args.max_output_length,
+                                         early_stopping=True,
+                                         )
+                for input_, output, q_id in zip(input_ids, outputs, question_ids):
+                    pred = dev_data.decode(output)
+                    print(f"check prediction for question {q_id}: ", pred)
+                    prediction_dict[q_id].append(pred)
+                    # predictions.append(pred) # no longer used
+
+
+
+                # input_id_list = batch[0]
+                # attention_mask_list = batch[1]
+                # input_id_list = [input_ids.to(device)
+                #                  for input_ids in input_id_list]
+                # attention_mask_list = [attention_mask.to(
+                #     device) for attention_mask in attention_mask_list]
+                # for (idx, (input_ids, attention_mask)) in enumerate(zip(input_id_list, attention_mask_list)):
+                    
+                #     output_for_one_qp = model.generate(input_ids=input_ids,
+                #                                               attention_mask=attention_mask,
+                #                                               num_beams=dev_data.args.num_beams,
+                #                                               max_length=dev_data.args.max_output_length,
+                #                                               early_stopping=True,
+                #                                               )
+                #     outputs.append(output_for_one_qp)
+                    
+                # preds = [] # prediction for one question
+                # for output_for_one_qp in outputs:
+                #     # pred = [dev_data.decode(output) for output in outputs_for_one_question]
+                #     # NOTE: due to the special predict_bs_size=1, there is additional batch dimension
+                #     # NOTE: the reason is for this special data, each batch needs to 
+                #     pred = dev_data.decode(output_for_one_qp[0]) 
+                    
+                #     preds.append(pred)
                 
-                # for bb in batch: # conisder bb as small batch for one question
-                #     _bb = [b.to(device) for b in bb]
-                #     if len(_bb[0].size()) == 1:
-                #         # import pdb; pdb.set_trace()
-                #     # print(len(bb[0].size()))
-                #         _bb[0] = _bb[0].unsqueeze(0)  
-                #         _bb[1] = _bb[1].unsqueeze(0)
-                #     outputs_for_one_question = model.generate(input_ids=_bb[0],
-                #                             attention_mask=_bb[1],
-                #                             num_beams=dev_data.args.num_beams,
-                #                             max_length=dev_data.args.max_output_length,
-                #                             early_stopping=True,
-                #                             )
-                #     outputs.append(outputs_for_one_question)
-                input_id_list = batch[0]
-                attention_mask_list = batch[1]
-                input_id_list = [input_ids.to(device)
-                                 for input_ids in input_id_list]
-                attention_mask_list = [attention_mask.to(
-                    device) for attention_mask in attention_mask_list]
-                for (idx, (input_ids, attention_mask)) in enumerate(zip(input_id_list, attention_mask_list)):
-                    
-                    output_for_one_qp = model.generate(input_ids=input_ids,
-                                                              attention_mask=attention_mask,
-                                                              num_beams=dev_data.args.num_beams,
-                                                              max_length=dev_data.args.max_output_length,
-                                                              early_stopping=True,
-                                                              )
-                    outputs.append(output_for_one_qp)
-                    
-                import pdb
-                pdb.set_trace()
-                preds = [] # prediction for one question
-                for output_for_one_qp in outputs:
-                    # pred = [dev_data.decode(output) for output in outputs_for_one_question]
-                    # NOTE: due to the special predict_bs_size=1, there is additional batch dimension
-                    # NOTE: the reason is for this special data, each batch needs to 
-                    pred = dev_data.decode(output_for_one_qp[0]) 
-                    
-                    preds.append(pred)
-            # eliminate empty prediction
+                
+                # post process predictions
+
+                # preds = [p for p in preds if len(p) != 0]  # eliminate empty prediction
+                # preds = "<sep>".join(preds)
+                # print("check prediction: ", preds)
+                # predictions.append(preds)
+        # PC eval: after all predictions
+        if args.passage_clustering:
+           
+            print('check length of prediction dict keys')
+            for i in prediction_dict.keys():
+                preds = prediction_dict[i]
                 preds = [p for p in preds if len(p) != 0]
                 preds = "<sep>".join(preds)
-                print("check prediction: ", preds)
-                predictions.append(preds)
-                # print("check the reason for repeated predictions")
-                # print(dev_data.decode(_bb[0]))
+                prediction_dict[i] = preds
+            # import pdb
+            # pdb.set_trace()
+            # print("check predictions ")
+        
+            predictions = prediction_dict  # rename for convenince
+            # import pdb
+            # pdb.set_trace()
+        print("check predict dict")
+
                 
             # outputs = model.generate(input_ids=batch[0] )
             # Q: span efxtraction: what it generates?
             # overwrite bert generate function
+
+
+        # another mothod is decode after all outputs
+        # we don't enforce ordered prediction from each question
+        # we decode and concatenate it based on question id  (dictionary)
+        # finally 
 
 
     elif predict_type.lower() == "spanextraction":

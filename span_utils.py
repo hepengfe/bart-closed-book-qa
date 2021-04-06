@@ -15,10 +15,12 @@ import scipy
 from scipy.special import log_softmax
 
 
-def dump_pickle(input_data, question_metadata, answer_data, metadata, encoded_input_path, encoded_answer_path, metadata_path):
+def dump_pickle(input_data, question_metadata, answer_data, metadata, encoded_input_path, encoded_answer_path, metadata_path, processed_data):
     metadata_path
     question_metadata_path = metadata_path.replace("metadata", "question_metadata")
     answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
+    processed_data_path = encoded_input_path.replace("_input", "_data")
+    
     with open(encoded_input_path, "wb") as fp:
         pickle.dump(input_data, fp)
     with open(question_metadata_path, "wb") as fp:
@@ -27,6 +29,8 @@ def dump_pickle(input_data, question_metadata, answer_data, metadata, encoded_in
         pickle.dump(answer_data, fp) 
     with open(answer_metadata_path, "wb") as fp:
         pickle.dump(metadata, fp)
+    with open(processed_data_path, "wb") as fp:
+        pickle.dump(processed_data, fp)
 
 
 def normalize_answer(s):
@@ -57,6 +61,7 @@ def load_pickle(encoded_input_path, encoded_answer_path, metadata_path):
     question_metadata_path = metadata_path.replace(
         "metadata", "question_metadata")
     answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
+    processed_data_path = encoded_input_path.replace("_input", "_data")
     with open(encoded_input_path, "rb") as fp:
         input_data = pickle.load(fp)
     with open(encoded_answer_path, "rb") as fp:
@@ -68,7 +73,13 @@ def load_pickle(encoded_input_path, encoded_answer_path, metadata_path):
         question_metadata = None 
     with open(answer_metadata_path, "rb") as fp:
         answer_metadata = pickle.load(fp)
-    return input_data, question_metadata, answer_data, answer_metadata
+    if os.path.exists(processed_data_path):
+        with open(processed_data_path, "rb") as fp:
+            processed_data = pickle.load(fp)
+    else:
+        processed_data = None
+
+    return input_data, question_metadata, answer_data, answer_metadata, processed_data
 
 
 def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path, logger,  tokenizer, max_input_length, max_n_answers=1, questions=None, answers=None, metadata=None, all_titles=None, all_passages=None,
