@@ -15,22 +15,49 @@ import scipy
 from scipy.special import log_softmax
 
 
-def dump_pickle(input_data, question_metadata, answer_data, metadata, encoded_input_path, encoded_answer_path, metadata_path, processed_data):
-    metadata_path
-    question_metadata_path = metadata_path.replace("metadata", "question_metadata")
-    answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
-    processed_data_path = encoded_input_path.replace("_input", "_data")
+
+def some_generic_dump_pickle(d, path):
+    with open(path, "wb") as fp:
+        pickle.dump(d, fp)
+
+def some_generic_load_pickle(d, path):
+    with open(path, "rb") as fp:
+        d = pickle.load(fp)
+    return d
+
+
+def dump_pickle(input_data, question_metadata, question_ids, answer_data, answer_metadata, joined_answers, encoded_input_path):
     
-    with open(encoded_input_path, "wb") as fp:
-        pickle.dump(input_data, fp)
-    with open(question_metadata_path, "wb") as fp:
-        pickle.dump(question_metadata, fp)
-    with open(encoded_answer_path, "wb") as fp:
-        pickle.dump(answer_data, fp) 
-    with open(answer_metadata_path, "wb") as fp:
-        pickle.dump(metadata, fp)
+    d = dict()
+    d["encoded_input"] = input_data
+    d["question_metadata"] = question_metadata
+    d["answer_data"] = answer_data 
+    d["answer_metadata"] = answer_metadata
+    d["question_ids"] = question_ids
+    d["joined_answers"] = joined_answers 
+    processed_data_path = encoded_input_path.replace("_input", "_data")
+
     with open(processed_data_path, "wb") as fp:
-        pickle.dump(processed_data, fp)
+        pickle.dump(d, fp)
+   
+
+    # question_metadata_path = metadata_path.replace(
+    #     "metadata", "question_metadata")
+    # answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
+
+
+
+
+    # with open(encoded_input_path, "wb") as fp:
+    #     pickle.dump(input_data, fp)
+    # with open(question_metadata_path, "wb") as fp:
+    #     pickle.dump(question_metadata, fp)
+    # with open(encoded_answer_path, "wb") as fp:
+    #     pickle.dump(answer_data, fp) 
+    # with open(answer_metadata_path, "wb") as fp:
+    #     pickle.dump(answer_metadata, fp)
+    # with open(processed_data_path, "wb") as fp:
+    #     pickle.dump(processed_data, fp)
 
 
 def normalize_answer(s):
@@ -48,7 +75,7 @@ def normalize_answer(s):
         return text.lower()
     return white_space_fix(remove_articles(remove_punc(lower(s))))
     
-def load_pickle(encoded_input_path, encoded_answer_path, metadata_path):
+def load_pickle(encoded_input_path): # , encoded_answer_path, metadata_path):
     """ load encoded input data (concatenations of question and passages) and answer data from picle files 
 
     Args:
@@ -58,28 +85,42 @@ def load_pickle(encoded_input_path, encoded_answer_path, metadata_path):
     Returns:
         [type]: [description]
     """
-    question_metadata_path = metadata_path.replace(
-        "metadata", "question_metadata")
-    answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
-    processed_data_path = encoded_input_path.replace("_input", "_data")
-    with open(encoded_input_path, "rb") as fp:
-        input_data = pickle.load(fp)
-    with open(encoded_answer_path, "rb") as fp:
-        answer_data = pickle.load(fp)
-    if os.path.exists(question_metadata_path):
-        with open(question_metadata_path, "rb") as fp:
-            question_metadata = pickle.load(fp)
-    else:
-        question_metadata = None 
-    with open(answer_metadata_path, "rb") as fp:
-        answer_metadata = pickle.load(fp)
-    if os.path.exists(processed_data_path):
-        with open(processed_data_path, "rb") as fp:
-            processed_data = pickle.load(fp)
-    else:
-        processed_data = None
 
-    return input_data, question_metadata, answer_data, answer_metadata, processed_data
+
+    # question_metadata_path = metadata_path.replace(
+    #     "metadata", "question_metadata")
+    # answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
+    processed_data_path = encoded_input_path.replace("_input", "_data")
+    with open(processed_data_path, "rb") as fp:
+        d = pickle.load(fp)
+    input_data = d["encoded_input"] 
+    question_metadata = d["question_metadata"] 
+    answer_data = d["answer_data"] 
+    answer_metadata = d["answer_metadata"]
+    question_ids = d["question_ids"]
+    joined_answers = d["joined_answers"]
+    # , processed_data
+    return input_data, question_metadata, question_ids, answer_data, answer_metadata, joined_answers
+
+
+    # with open(encoded_input_path, "rb") as fp:
+    #     input_data = pickle.load(fp)
+    # with open(encoded_answer_path, "rb") as fp:
+    #     answer_data = pickle.load(fp)
+    # if os.path.exists(question_metadata_path):
+    #     with open(question_metadata_path, "rb") as fp:
+    #         question_metadata = pickle.load(fp)
+    # else:
+    #     question_metadata = None 
+    # with open(answer_metadata_path, "rb") as fp:
+    #     answer_metadata = pickle.load(fp)
+    # if os.path.exists(processed_data_path):
+    #     with open(processed_data_path, "rb") as fp:
+    #         processed_data = pickle.load(fp)
+    # else:
+    #     processed_data = None
+
+    # return input_data, question_metadata, answer_data, answer_metadata, processed_data
 
 
 def preprocess_span_input(encoded_input_path, encoded_answer_path, metadata_path, logger,  tokenizer, max_input_length, max_n_answers=1, questions=None, answers=None, metadata=None, all_titles=None, all_passages=None,

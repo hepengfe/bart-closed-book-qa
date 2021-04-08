@@ -85,11 +85,17 @@ def run(args, logger):
             dev_data = QAData(logger, args, args.predict_file, "test") 
             dev_data_prefix = "[TEST DATA]\t" 
         else:
+            # temp for memory trick
+            # dev_data = QAData(logger, args, args.predict_file, "dev")
+            # dev_data.load_dataset(tokenizer)
+            # dev_data.load_dataloader()
+
             train_data = QAData(logger, args, args.train_file, "train") 
             dev_data = QAData(logger, args, args.predict_file, "dev")
             train_data_prefix =  "[TRAIN DATA]\t"
             logger.info(train_data_prefix + "Start loading...")
             logger.info(train_data_prefix + f"batch size {args.train_batch_size}")
+            
             train_data.load_dataset(tokenizer)
             train_data.load_dataloader()
             dev_data_prefix = "[DEV DATA]\t" 
@@ -414,7 +420,8 @@ def get_model(model, device):
 def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = False, save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
-
+    # import pdb; pdb.set_trace()
+    # print("check dev data question ids")
     if predict_type.lower() == "spanseqgen":
         from collections import defaultdict
         # {question_idx : [pred_str1, pred_str2]}
@@ -422,7 +429,6 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
             if not args.passage_clustering:
                 batch = [b.to(device) for b in batch]
-                
                 
                 outputs = model.generate(input_ids=batch[0],
                                         attention_mask=batch[1],
