@@ -508,7 +508,7 @@ class QAData(object):
 
         
                     self.logger.info(
-                        logging_prefix + "Start encoding questions and answers, this might take a while")
+                        logging_prefix + "Start encoding QP and answers, this might take a while")
                     question_input = tokenizer.batch_encode_plus(questions,
                                                             pad_to_max_length=True,
                                                             max_length=self.args.max_input_length,

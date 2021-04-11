@@ -22,6 +22,8 @@ from span_utils import preprocess_span_input, dump_pickle, load_pickle
 import itertools
 from numpy import random
 from sklearn.cluster import KMeans
+from dateutil.parser import ParserError, parse
+from number_parser import parse_number
 
 class QAData(object):
 
@@ -65,9 +67,12 @@ class QAData(object):
         if type(self.data) == dict:
             self.data = self.data["data"]
         self.processed_data = None
-        if args.debug and self.is_training == False:
-            logger.warn("[DEBUG MODE] Load all dev data")
-            self.data = self.data[:100]
+        if args.debug :
+            if self.is_training == False:
+                logger.warn("[DEBUG MODE] Load all dev data")
+                self.data = self.data[:100]
+            # else:
+            #     self.data = self.data[100:]
             # logger.warn("[DEBUG MODE] Load partial dev data")
             # self.data = self.data[:500]
 
@@ -108,7 +113,7 @@ class QAData(object):
         if self.args.passage_clustering: # only need to load when using passage clustering
             self.clustered_passages_path = "data/clustering_results/AmbigQA_"
             postfix = ["top", self.args.top_k_passages, "passages",
-                       self.data_type, "is_training", self.is_training]
+                       self.data_type, "is_training", self.is_training, "rank_threshold", self.args.rank_threshold]
             postfix = [str(x) for x in postfix]
             postfix = "_".join(postfix)
             if self.args.debug:
@@ -213,11 +218,13 @@ class QAData(object):
         if postfix[:2].lower() == "t5":  # TODO: find a smarter way to check if it's dataset for T5
            prepend_question_token = True
         if self.args.augment_k_times == 1:
-            postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(
-                self.top_k_passages), self.answer_type, "is_training", str(self.is_training)])  # TODO: can be written more elegantly by using dictionary
+            postfix = [postfix, "max_input_length", self.max_input_length, "top",  
+                self.top_k_passages,  "rank_threshold", self.args.rank_threshold, self.answer_type, "is_training", self.is_training]  # TODO: can be written more elegantly by using dictionary
         else:
-            postfix = "_".join([postfix, "max_input_length", str(self.max_input_length), "top",  str(
-                self.top_k_passages), self.answer_type, "answers",  self.args.augment_k_times, "augmentation", "is_training", str(self.is_training)])
+            postfix = [postfix, "max_input_length", self.max_input_length, "top",  
+                self.top_k_passages, "rank_threshold", self.args.rank_threshold ,self.answer_type, "answers",  self.args.augment_k_times, "augmentation", "is_training", self.is_training]
+        postfix = [str(x) for x in postfix]
+        postfix = "_".join(postfix)
         if self.debug:
             postfix += "_debug"
         
@@ -261,17 +268,9 @@ class QAData(object):
             else:
                 exit()
 
-        # 1. check if there is cache, if not then tokenize. If there is cache, we
-        # 2. check if
-        # question_metadata_path = metadata_path.replace(
-        #     "metadata", "question_metadata")
-        # answer_metadata_path = metadata_path.replace("metadata", "answer_metadata")
-        
+
         self.cache = os.path.exists(processed_data_path)
-        # self.cache = os.path.exists(encoded_input_path) \
-        #     and os.path.exists(encoded_answer_path) \
-        #     and os.path.exists(question_metadata_path) \
-        #     and os.path.exists(answer_metadata_path)
+
 
         # load exists cache or pre-process a new one
         # General procedure:
@@ -509,10 +508,10 @@ class QAData(object):
                             # concatenate question and passages 
                             if self.args.passage_clustering:
                                 self.logger.info(
-                                    logging_prefix + "Not found clustering results, start clustering...")
+                                    logging_prefix + "Concatenating clustering results...")
                                 for i in tqdm(range(len(questions))):
                                     clusters_passages, num_cluster_for_question_i, num_passages_for_question_i = self.passages.get_clustered_passages(
-                                        i)  # 2-d list
+                                        i, self.args.rank_threshold)  # 2-d list
                                     num_clusters += num_cluster_for_question_i
                                     num_passages += num_passages_for_question_i 
                                     # make questions[i] a list, put index 0 a concatenation of all passsages
@@ -535,7 +534,9 @@ class QAData(object):
                                     
                                     questions_with_clustered_passages.append([]) 
                                     questions_with_clustered_passages[i].append(all_qp_concatenation)
-                                    for p_cluster in clusters_passages:
+                                    
+                                    
+                                    for p_cluster in clusters_passages: # it's ordered 
                                         cluster_qp_concatenation = questions[i] # reset qp concatenation
                                         cluster_qp_concatenation += " <s> "
                                         start = True
@@ -619,6 +620,23 @@ class QAData(object):
                                                         for i in rnd_indices]
                             return concatenated_answers
 
+                        def is_answer_a_date_or_infreq_digit(answer_str):
+                            # example: 2, 3, 4 -> False
+                            # example:  july 25 2018 -> True
+                            # example: more than 1 million -> it should be considered as a sequence of tokens which is more frequent 
+                            try: 
+                                if len(answer_str) < 4:  # # example: 2, 3, 4
+                                    return False
+                                parse(answer_str)
+                                return True  # example:  july 25 2018
+                            except ParserError:
+                                answer_str = answer_str.replace(",","")
+                                if parse_number(answer_str) != None:  # example: 55,000
+                                    return True
+                                return False  # example: more than 1 million
+                            except TypeError:
+                                return False  
+
 
                         new_questions = []
                         question_metadata = []
@@ -633,8 +651,8 @@ class QAData(object):
                         
                         joined_answers_l = []
 
-
-
+                        num_eliminated_qp = 0
+                        answer_presence_d = defaultdict(lambda: 0)
                         for idx, (cur_qp, cur_md) in enumerate(zip(questions_n_passages, metadata)):
                             if self.args.passage_clustering:
                                 cur_qp_str = cur_qp[0] # in the past, we only check the whole concatenations
@@ -662,18 +680,19 @@ class QAData(object):
                                 if len(found_answer_for_qa_pair) > 0:
                                     found_answers_for_one_question.append(
                                         list(set(found_answer_for_qa_pair))) # NOTE: remove duplicated answers for one qa pair
+                                
                             if len(found_answers_for_one_question) == 0 and self.is_training:
                                 # actually in dev mode, length is certainly larger than zero as we will add answer no matter its presence in passages
                                 continue
-
-                            
-                            
                             # NOTE: for regular training mode(no passage clustering), we still add answers for every question
                             if self.is_training and self.args.passage_clustering : # add answers separately for each clusters for training + passage clustering mode
                                 # new type of 
                                 # is_training -> seprate pairs of QP and A
                                 # not is_training -> combine as we used to do
-                                for cur_qp_str in cur_qp[1:]:
+                                for (cluster_rank, cur_qp_str) in enumerate(cur_qp[1:]):
+                                    aug_times = 0
+                                    num_date = 0
+                                    num_long_answer = 0
                                     found_answers_for_one_qp = []
                                     # check answer presence in all answers 
                                     # add presented answers into answer 
@@ -684,31 +703,56 @@ class QAData(object):
                                             # acceptable answers for one qa pair
                                             answer_for_qa_pair = answers[start:end]
                                             for cur_a_str in answer_for_qa_pair:
+                                                # import pdb; pdb.set_trace()
+                                                # print("cur_a_str: ", cur_a_str)
+                                                # print("is_answer_in_passages: ", is_answer_in_passages(
+                                                #     cur_a_str, cur_qp_str))
                                                 if is_answer_in_passages(cur_a_str, cur_qp_str):
                                                     found_answer_for_qa_pair.append(
                                                         cur_a_str)
+                                                    answer_presence_d[cluster_rank] += 1
+                                                    if is_answer_a_date_or_infreq_digit(cur_a_str):
+                                                        num_date += 1 
+                                                    if len(cur_a_str.split(" ")) >= 4:
+                                                        num_long_answer += 1 
                                         if len(found_answer_for_qa_pair) > 0:
                                             found_answers_for_one_qp.append(found_answer_for_qa_pair)
                                     # skip adding alighed questions and answers if not found qp 
                                     if len(found_answers_for_one_qp) == 0 and self.is_training:
-                                        continue
-                                    # concatenate qp's answers 
+                                        num_eliminated_qp += 1  # no actually eliminated because 
+                                        empty_answer_gen_ratio = 0.5
+                                        if np.random.rand() < empty_answer_gen_ratio:
+                                            empty_answer_str = "<s> </s>"
+                                            found_answer_for_qa_pair.append(
+                                                empty_answer_str)
+                                            
+                                            found_answers_for_one_qp.append(
+                                                found_answer_for_qa_pair)
+                                        else:
+                                            continue
+                                    
+                                    aug_times += len(found_answers_for_one_qp)
+                                    aug_times += num_date
+                                    aug_times += num_long_answer
+                                    # concatenate qp's answers
                                     cur_answers = concatenate_answers(
                                         found_answers_for_one_qp)
-                                    # append for each QP passages
-                                    answer_start_idx = len(new_answers)
-                                    # maintain its 1-D format
-                                    new_answers.extend(cur_answers)
-                                    answer_end_idx = len(new_answers)
+                                    for i in range(aug_times):
+                                        
+                                        # append for each QP passages
+                                        answer_start_idx = len(new_answers)
+                                        # maintain its 1-D format
+                                        new_answers.extend(cur_answers)
+                                        answer_end_idx = len(new_answers)
 
-                                    question_start_idx = len(new_questions)
-                                    new_questions.append(cur_qp_str)
-                                    question_end_idx = len(new_questions)
+                                        question_start_idx = len(new_questions)
+                                        new_questions.append(cur_qp_str)
+                                        question_end_idx = len(new_questions)
 
-                                    question_metadata.append(
-                                        (question_start_idx, question_end_idx)) # we actually added just a qp pair
-                                    answer_metadata.append(
-                                        (answer_start_idx, answer_end_idx))
+                                        question_metadata.append(
+                                            (question_start_idx, question_end_idx)) # we actually added just a qp pair
+                                        answer_metadata.append(
+                                            (answer_start_idx, answer_end_idx))
 
 
                             else: # add concatenation of answers in eval dataset
@@ -735,8 +779,7 @@ class QAData(object):
                                 answer_end_idx = len(new_answers)
 
                                 question_start_idx = len(new_questions)
-                                # import pdb; pdb.set_trace()
-                                # print("check question ids")
+
                                 # rename for some clarity
                                 question_id = self.question_ids[idx]
                                 # import pdb; pdb.set_trace() 
@@ -761,7 +804,13 @@ class QAData(object):
                                     (answer_start_idx, answer_end_idx))
                         
                         if self.args.passage_clustering:
+                            import pdb; pdb.set_trace()
+                            print("check answer_presence_d")
+                            print("check num_eliminated_qp ")
+                            
                             self.logger.info(logging_prefix + f"Selected qp ratio: {len(question_metadata)/len(questions_n_passages)}")
+                            self.logger.info(
+                                logging_prefix + f"num_eliminated_qp")
                         
                         if len(question_indices) is not []:
                             self.question_ids = question_indices
@@ -770,7 +819,7 @@ class QAData(object):
                         questions = new_questions
                         answers = new_answers
                         # import pdb; pdb.set_trace()
-                        print("answers example: ", answers[:10])
+                        print("answers example: ", answers[:30])
                         for (idx, joined_answers) in enumerate(joined_answers_l):
                             self.data[idx]["answers"] = joined_answers
 
@@ -953,11 +1002,24 @@ class QAData(object):
                     #     else:
                     #         self.logger.warn("error in qa_d type: ")
                     #         exit()
-                    prediction = prediction.replace(
-                        "<s>", "").replace("</s>", "").split("<sep>")
+                   
                     # import pdb; pdb.set_trace()
-                    
-                    max_f1 = np.max( [get_f1(cur_answer, prediction)  for cur_answer in cur_answers])
+
+                    # regular f1
+                    # prediction = prediction.replace(
+                        # "<s>", "").replace("</s>", "").split("<sep>")
+                    # max_f1 = np.max( [get_f1(cur_answer, prediction)  for cur_answer in cur_answers])
+
+                    # f1 with out duplication
+                    prediction=prediction.replace(
+                        "<s>", "").replace("</s>", "").split("<sep>")
+                    prediction = [normalize_answer(pred) for pred in prediction] 
+                    prediction = [pred for pred in prediction if len(pred) != 0 ] # remove empty prediction
+                    max_f1 = np.max([get_f1(list(set(cur_answer)), list(set(prediction)))
+                                     for cur_answer in cur_answers] ) 
+
+
+
                     print(f"f1: {max_f1}  prediction: {prediction} cur_answer: {cur_answers[:10]}")
                     # NOTE: the only difference from span answer type
                     f1s.append(max_f1)
@@ -1045,8 +1107,14 @@ def get_f1(answers, predictions, is_equal=get_exact_match):
     :answers: a list of list of strings
     :predictions: a list of strings
     '''
+    if len(predictions) == 0:
+        return 0 
+    assert len(answers) > 0
 
-    assert len(answers) > 0 and len(predictions) > 0, (answers, predictions)
+
+    # assert len(answers) > 0 and len(predictions) > 0, (answers, predictions)
+
+    
     occupied_answers = [False for _ in answers]
     occupied_predictions = [False for _ in predictions]
     for i, answer in enumerate(answers):
@@ -1135,11 +1203,12 @@ def load_passage_embeddings(embedding_path):
 class MyDataLoader(DataLoader):
 
     def __init__(self, args, dataset, is_training):
-        if is_training:
+        if is_training and not args.debug: 
             sampler = RandomSampler(dataset)
             batch_size = args.train_batch_size
         else:
             # sampler = RandomSampler(dataset)
+            # in debug mode, we can see how non-identical data help training
             sampler = SequentialSampler(dataset)
             # TODO: add forcing change predict batch size
             batch_size = args.predict_batch_size
@@ -1174,7 +1243,7 @@ class topKPassasages():
 
 
     
-    def get_clustered_passages(self, i):
+    def get_clustered_passages(self, i, rank_threshold):
         """Indexed on quesiton id and return clusters of passages
 
         Args:
@@ -1221,7 +1290,7 @@ class topKPassasages():
         # add top-k cluster
         filtered_clusters = []
         for (cluster_label, avg_rank) in sorted_cluster_ranks:
-            if avg_rank < 40:
+            if avg_rank < rank_threshold:
                 filtered_clusters.append(
                     cluster_label)
             else:
@@ -1284,9 +1353,6 @@ class topKPassasages():
 
     def get_passage_ids(self, i):
         return self.ranks[i]
-
-    # def topKRank(self, k=100):
-    #     self.ranks = [r[:k] for r in self.ranks]
 
 
 

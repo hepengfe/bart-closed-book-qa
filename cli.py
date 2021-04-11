@@ -124,6 +124,7 @@ def main():
     # passage clustering
     parser.add_argument("--passage_clustering",
                         default=False, action="store_true")
+    parser.add_argument("--rank_threshold", default=40, type=int)
 
 
     # reset parameters
