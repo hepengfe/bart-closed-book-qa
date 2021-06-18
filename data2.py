@@ -25,6 +25,12 @@ from sklearn.cluster import KMeans
 from dateutil.parser import ParserError, parse
 from number_parser import parse_number
 
+
+import csv
+
+
+
+
 class QAData(object):
 
     def __init__(self, logger, args, data_path, dataset_type):
@@ -348,8 +354,6 @@ class QAData(object):
                     logging_prefix + "Not found tokenized data, start loading passagesing...")
                 
 
-                self.args.augment_k_times
-
                 # pre-process question list from data
                 questions = [d["question"] if d["question"].endswith("?") else d["question"]+"?"
                              for d in self.data]
@@ -442,11 +446,12 @@ class QAData(object):
                         # TODO: add them to arguments
                         # note that after this questions are actually a concatenation of questions and passages
                         self.logger.info(logging_prefix + f"Start concatenating question and passages for top {self.top_k_passages} passages")
+                        self.passages = topKPassasages(
+                            self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path)
                         for i in tqdm(range(len(questions))):
                             # mark the begining of passages
                             questions[i] += " <s> "
                             # add passage one by one
-                            # what is purpose of PCA? dimensions are very high and we   
                             for p in self.passages.get_passages(i, self.args.top_k_passages):
                                 # format: [CLS] question [SEP] title 1 [SEP] passages
                                 questions[i] += self.spaced_sep_token + \
@@ -476,7 +481,6 @@ class QAData(object):
                         
                         num_clusters = 0
                         num_passages = 0
-
                         if self.args.passage_clustering and os.path.exists(self.clustered_passages_path): # check if there is clustered passagses (only need when passage clustering)
                             self.logger.info(
                                 logging_prefix + "Loading clustering results...")
@@ -515,9 +519,6 @@ class QAData(object):
                                     num_clusters += num_cluster_for_question_i
                                     num_passages += num_passages_for_question_i 
                                     # make questions[i] a list, put index 0 a concatenation of all passsages
-                                    # questions[0] 
-                                    # questions[1]:  we put clusters of passages
-                                    # qp_concatenation_list = []
                                     all_qp_concatenation = questions[i]
                                     
                                     # add concatenation of all in the first entry
@@ -717,7 +718,7 @@ class QAData(object):
                                                         num_long_answer += 1 
                                         if len(found_answer_for_qa_pair) > 0:
                                             found_answers_for_one_qp.append(found_answer_for_qa_pair)
-                                    # skip adding alighed questions and answers if not found qp 
+                                    # skip adding aligned questions and answers if not found qp 
                                     if len(found_answers_for_one_qp) == 0 and self.is_training:
                                         num_eliminated_qp += 1  # no actually eliminated because 
                                         empty_answer_gen_ratio = 0.5
@@ -863,6 +864,7 @@ class QAData(object):
                     self.logger.info(
                         logging_prefix + f"Passage kept rate(after truncation): {passage_coverage_rate * 100} %")
                 elif self.answer_type == "span":
+                    question_metadata = None
                     # assume questions = [Q1, Q2]
                     # answers = [[A1 <SEP> A2], [A3]]
                     # all titles = [ [T1, T2, ..., T100], [T1, T2, ..., T100]   ]
@@ -988,7 +990,7 @@ class QAData(object):
             if self.answer_type == "seq":
                 for (prediction, dp) in zip(predictions, self.data):
                     if type(predictions) == defaultdict:
-                        question_idx = prediction # it's actually dictionary key
+                        question_idx = prediction # it's actually dictionary key, predictions is a dictionary here
                         prediction = predictions[question_idx]
                     cur_answers = dp["answers"] 
                     # for qa_d in dp["annotations"]:
@@ -1015,6 +1017,16 @@ class QAData(object):
                         "<s>", "").replace("</s>", "").split("<sep>")
                     prediction = [normalize_answer(pred) for pred in prediction] 
                     prediction = [pred for pred in prediction if len(pred) != 0 ] # remove empty prediction
+                    import pdb; pdb.set_trace()
+                    print("find some empty predictions and make secondary predictions")
+                    if len(prediction) == 0:
+                        pass
+                        # current data is flattened as well x (q, PC) y is gold answer in it
+                        # it's too late to use model.generate here
+                        # check ahead prediction.strip() -> answers = 
+
+
+
                     max_f1 = np.max([get_f1(list(set(cur_answer)), list(set(prediction)))
                                      for cur_answer in cur_answers] ) 
 
@@ -1191,13 +1203,36 @@ class QAGenDataset(Dataset):
         return self.input_ids[in_idx], self.attention_mask[in_idx], \
             self.decoder_input_ids[out_idx], self.decoder_attention_mask[out_idx]
 
+
+
 def load_passage_embeddings(embedding_path):
+    def load_passage_embed(i):
+        with open(embedding_path + f'wiki2020embedding_{i}.pkl', 'rb') as f:
+            return  (i, pickle.load(f))  # (key, value) pair
+        
+    
+
+
     
     embedding_data = []  # embedding can be accessed by simply using passage id
-    # NOTE: for debugging purpose, here we only load 20 passage embedding files
+
+    # # NOTE: for debugging purpose, here we only load 20 passage embedding files
+    # for i in tqdm(range(50)):
+    #     with open(embedding_path + f'wiki2020embedding_{i}.pkl', 'rb') as f:
+    #         embedding_data.extend(pickle.load(f))
+
+    import multiprocessing as mp
+    pool = mp.Pool()
+    import pdb; pdb.set_trace()
+    embedding_d = dict(pool.map(load_passage_embed, range(50)))
+    
     for i in tqdm(range(50)):
-        with open(embedding_path + f'wiki2020embedding_{i}.pkl', 'rb') as f:
-            embedding_data.extend(pickle.load(f))
+        embedding_data.extend(embedding_d[i])
+    # store them in a dictionary 
+    # dict[i] = embedding
+    
+    # then for loop it
+
     return embedding_data
 
 class MyDataLoader(DataLoader):
@@ -1218,7 +1253,7 @@ class MyDataLoader(DataLoader):
 
 class topKPassasages():
     """
-    This class serves as modular way of retrieving top k passages of a question for reader
+    This class serves as a modular way of retrieving top k passages of a question for reader
     """
 
     def __init__(self, k, passages_path, rank_path, data_path, passage_embedding = None, evaluate=False):
@@ -1230,9 +1265,25 @@ class topKPassasages():
         # for nq dataset, {id:str, question:text, answer:text}
         # for ambig dataset, {id:str, question:text, answer:[text1, text2]} ?
         # a list of dictionary {title:str, text:str}
-        print("loading passages ")
-        self.passages = self.load_passages(passages_path)
+
+        wiki_split_path = passages_path.split("/")
+        wiki_split_path[-1] = wiki_split_path[-1].replace(".tsv", "_split")
+        wiki_split_path = "/".join(wiki_split_path)
+
+        import os
+        # split wiki passages 
+        # check if passage split data is available
+        if not os.path.exists(wiki_split_path) or len(os.listdir(wiki_split_path)) == 0:
+            self.passages = self.load_passages(
+                passages_path, wiki_split_path, parallel = False)  # a list of dictionary
+
+        else:
+            print("loading passages in parallel  ")
+            self.passages = self.load_passages(
+                passages_path, wiki_split_path, parallel=True)
+    
         self.passage_embeddings = passage_embedding
+        self.wiki_data = None
         
         if evaluate:
             # self.recall = self.evaluate_recall()
@@ -1354,9 +1405,33 @@ class topKPassasages():
     def get_passage_ids(self, i):
         return self.ranks[i]
 
+    def load_wiki_data(self, passages_path):
+        wiki_data = []
+        with open(passages_path, "rb") as fp:
+            for line in fp.readlines():
+
+                wiki_data.append(line.decode().strip().split("\t"))
+
+                    
+        return wiki_data
+
+    def load_wiki_split(self, passages_path, split_idx ):
+        wiki_data = []
+        with open(passages_path, "r") as fp:
+            for line in fp.readlines():
+                wiki_data.append(line.strip().split("\t"))
+        return (split_idx, wiki_data)
+        
 
 
-    def load_passages(self, passages_path):
+    def write_wiki_data(self, split_idx, wiki_split_path, f_name,  num_p_per_split):
+        with open(os.path.join(wiki_split_path, f_name + f"_{split_idx}.tsv"), 'w') as f_output:
+            tsv_output = csv.writer(f_output, delimiter='\t')
+            for i in range(split_idx*num_p_per_split, min((split_idx+1)*num_p_per_split, len(self.wiki_data))):
+                tsv_output.writerow(self.wiki_data[i])
+
+
+    def load_passages(self, passages_path, wiki_split_path, parallel = False):
         """[load, format passages ]
 
         Args:
@@ -1365,15 +1440,54 @@ class topKPassasages():
         Returns:
             [type]: [description]
         """
+        
+        f_name = wiki_split_path.split("/")[-1]
+        num_split = 30
+        # wiki_data = []
+        import multiprocessing as mp
+        # original passage file is binary file
+        # passage split is not binary file
+        if not parallel:
+            if not os.path.exists(wiki_split_path):
+                os.makedirs(wiki_split_path)
+            wiki_data_split = []
+            self.wiki_data = self.load_wiki_data(passages_path)
+            # with open(passages_path, "rb") as fp:
+            #     for line in fp.readlines():
+            #         import pdb; pdb.set_trace()
+            #         wiki_data.append(line.decode().strip().split("\t"))
+            
+            num_p_per_split = len(self.wiki_data) // num_split
+            assert self.wiki_data[0] == ["id", "text", "title"]
 
-        wiki_data = []
-        with open(passages_path, "rb") as fp:
-            for line in fp.readlines():
-                wiki_data.append(line.decode().strip().split("\t"))
-        assert wiki_data[0] == ["id", "text", "title"]
-        # TODO: don't we record passage id? id is just its index (we change it to 0 based)
+            # save split files 
+            import csv
+
+            pool = mp.Pool()
+            pool.starmap(self.write_wiki_data, zip(
+                range(num_split), [wiki_split_path]*num_split, [f_name]*num_split, [num_p_per_split]*num_split))
+
+                # with open(os.path.join(wiki_split_path, f_name + f"_{split_idx}.tsv"), 'w') as f_output:
+                #     tsv_output = csv.writer(f_output, delimiter='\t')
+                #     for i in range(split_idx*num_p_per_split, min((split_idx+1)*num_p_per_split, len(wiki_data))):
+                #         import pdb; pdb.set_trace()
+                #         tsv_output.writerow(wiki_data[i])
+            # TODO: don't we record passage id? id is just its index (we change it to 0 based)
+        else:
+            # load split files directly
+            
+            pool = mp.Pool()
+            import pdb
+            pdb.set_trace()
+            # use dictionary to presever the order
+            passage_split_paths = [os.path.join(wiki_split_path, f_name + f"_{split_idx}.tsv") for split_idx in range(num_split)]
+            wiki_data_d = dict(pool.starmap(self.load_wiki_split, zip(
+                passage_split_paths,  range(num_split))  ))
+            for i in range(num_split):
+                wiki_data.extend(wiki_data_d[i])
+        # transform
         wiki_data = [{"title": title, "text": text}
-                     for _, text, title in wiki_data[1:]]
+                     for _, text, title in self.wiki_data[1:]]
         return wiki_data
 
     def load_answer(self, data_path):

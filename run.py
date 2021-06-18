@@ -466,6 +466,16 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                     prediction_dict[q_id].append(pred)
                     # predictions.append(pred) # no longer used
 
+        # second generation
+        if args.passage_clustering:
+            # generate if no ids found in prediction_dict.keys()
+            # and 
+            import pdb;
+            pdb.set_trace()
+            print("second generation")
+
+
+
 
 
                 # input_id_list = batch[0]
@@ -505,7 +515,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
            
             print('check length of prediction dict keys')
             for i in prediction_dict.keys():
-                preds = prediction_dict[i]
+                preds = prediction_dict[i]  # predictions for one question
                 preds = [p for p in preds if len(p) != 0]
                 preds = "<sep>".join(preds)
                 prediction_dict[i] = preds
