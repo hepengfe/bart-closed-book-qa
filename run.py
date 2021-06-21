@@ -426,45 +426,79 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
         from collections import defaultdict
         # {question_idx : [pred_str1, pred_str2]}
         prediction_dict = defaultdict(lambda :[])
-        for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-            if not args.passage_clustering:
-                batch = [b.to(device) for b in batch]
+        # for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
+        #     if not args.passage_clustering:
+        #         import pdb; pdb.set_trace()
+        #         batch = [b.to(device) for b in batch]
                 
-                outputs = model.generate(input_ids=batch[0],
-                                        attention_mask=batch[1],
-                                        num_beams=dev_data.args.num_beams,
-                                        max_length=dev_data.args.max_output_length,
-                                        early_stopping=True,
-                                        )
-                # TODO: if it's logits then use decode function in span utils
-                for input_, output in zip(batch[0], outputs):
+        #         outputs = model.generate(input_ids=batch[0],
+        #                                 attention_mask=batch[1],
+        #                                 num_beams=dev_data.args.num_beams,
+        #                                 max_length=dev_data.args.max_output_length,
+        #                                 early_stopping=True,
+        #                                 )
+        #         # TODO: if it's logits then use decode function in span utils
+        #         for input_, output in zip(batch[0], outputs):
+        #             pred = dev_data.decode(output)
+        #             print("check prediction: ", pred)
+        #             predictions.append(pred)
+        #     else:
+        #         # bs x 2 (input id, attention) x #clusters
+        #         # output_metadata = []
+        #         outputs = []
 
+
+        #         input_ids=batch[0]
+        #         attention_mask=batch[1]
+        #         question_ids = batch[2]
+        #         input_ids = input_ids.to(device)
+        #         attention_mask = attention_mask.to(device)
+
+        #         outputs = model.generate(input_ids=input_ids,
+        #                                  attention_mask=attention_mask,
+        #                                  num_beams=dev_data.args.num_beams,
+        #                                  max_length=dev_data.args.max_output_length,
+        #                                  early_stopping=True,
+        #                                  )
+        #         for input_, output, q_id in zip(input_ids, outputs, question_ids):
+        #             pred = dev_data.decode(output)
+        #             print(f"check prediction for question {q_id}: ", pred)
+        #             prediction_dict[q_id].append(pred)
+        #             # predictions.append(pred) # no longer used
+
+
+        for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
+            input_ids = batch[0]
+            attention_mask = batch[1]
+            question_ids = batch[2]
+            input_ids = input_ids.to(device)
+            attention_mask = attention_mask.to(device)
+
+            outputs = model.generate(input_ids=input_ids,
+                                     attention_mask=attention_mask,
+                                     num_beams=dev_data.args.num_beams,
+                                     max_length=dev_data.args.max_output_length,
+                                     early_stopping=True,
+                                     )
+            if not args.passage_clustering:
+                for input_, output in zip(batch[0], outputs):
                     pred = dev_data.decode(output)
                     print("check prediction: ", pred)
                     predictions.append(pred)
             else:
-                # bs x 2 (input id, attention) x #clusters
-                # output_metadata = []
-                outputs = []
-
-
-                input_ids=batch[0]
-                attention_mask=batch[1]
-                question_ids = batch[2]
-                input_ids = input_ids.to(device)
-                attention_mask = attention_mask.to(device)
-
-                outputs = model.generate(input_ids=input_ids,
-                                         attention_mask=attention_mask,
-                                         num_beams=dev_data.args.num_beams,
-                                         max_length=dev_data.args.max_output_length,
-                                         early_stopping=True,
-                                         )
                 for input_, output, q_id in zip(input_ids, outputs, question_ids):
                     pred = dev_data.decode(output)
                     print(f"check prediction for question {q_id}: ", pred)
                     prediction_dict[q_id].append(pred)
                     # predictions.append(pred) # no longer used
+
+
+
+
+
+
+
+
 
         # second generation
         if args.passage_clustering:

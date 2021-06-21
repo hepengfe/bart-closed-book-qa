@@ -277,7 +277,7 @@ class QAData(object):
 
         self.cache = os.path.exists(processed_data_path)
 
-
+        joined_answers_l = []
         # load exists cache or pre-process a new one
         # General procedure:
         # 1. check if pickle cache exists
@@ -300,8 +300,9 @@ class QAData(object):
                 input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
                 decoder_input_ids, decoder_attention_mask = answer_input[
                     "input_ids"], answer_input["attention_mask"]
-                for (idx, joined_answers) in enumerate(joined_answers_l):
-                    self.data[idx]["answers"] = joined_answers
+                if self.dataset_name == "ambig":
+                    for (idx, joined_answers) in enumerate(joined_answers_l):
+                        self.data[idx]["answers"] = joined_answers
                 # inputs are lists of integers
 
             elif self.answer_type == "span":
@@ -436,7 +437,6 @@ class QAData(object):
                     answers = [answer.lower() for answer in answers]
 
                 # answers has been flattened, so it's normal to have more answers than questions
-                
 
                 self.logger.info(logging_prefix +
                                  "Start concatenating question and passages ")
@@ -458,7 +458,8 @@ class QAData(object):
                                     p["title"] + self.spaced_sep_token + p["text"]
                             # mark the begining of passages
                             questions[i] += " </s> "
-                        
+                        question_metadata = None 
+                        answer_metadata = None
                         # NOTE: no need to rename
                         # questions_n_passages = questions  # rename
                         # new_questions = questions  # rename
@@ -478,7 +479,7 @@ class QAData(object):
                         all_qp_concatenation_list = []
                         self.logger.info(
                             logging_prefix + f"Start concatenating question and passages for top {self.top_k_passages} passages")
-                        
+                        # import pdb; pdb.set_trace() 
                         num_clusters = 0
                         num_passages = 0
                         if self.args.passage_clustering and os.path.exists(self.clustered_passages_path): # check if there is clustered passagses (only need when passage clustering)
@@ -491,6 +492,7 @@ class QAData(object):
                                 num_questions = clustering_results["num_questions"]
                                 questions_n_passages = clustering_results["questions_n_passages"]
                         else: # no PC or PC but no clusteres passages
+
                             # load all passages embedding or 
                             if self.args.passage_clustering:
                                 self.top_k_passages = 100
@@ -507,9 +509,9 @@ class QAData(object):
                                 self.passages = topKPassasages(
                                     self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path)
 
-
-
-                            # concatenate question and passages 
+                            import pdb
+                            pdb.set_trace()
+                            # concatenate question and passages
                             if self.args.passage_clustering:
                                 self.logger.info(
                                     logging_prefix + "Concatenating clustering results...")
@@ -650,7 +652,6 @@ class QAData(object):
 
                         # # new_questions
                         
-                        joined_answers_l = []
 
                         num_eliminated_qp = 0
                         answer_presence_d = defaultdict(lambda: 0)
@@ -808,7 +809,7 @@ class QAData(object):
                             import pdb; pdb.set_trace()
                             print("check answer_presence_d")
                             print("check num_eliminated_qp ")
-                            
+                             
                             self.logger.info(logging_prefix + f"Selected qp ratio: {len(question_metadata)/len(questions_n_passages)}")
                             self.logger.info(
                                 logging_prefix + f"num_eliminated_qp")
@@ -1204,16 +1205,12 @@ class QAGenDataset(Dataset):
             self.decoder_input_ids[out_idx], self.decoder_attention_mask[out_idx]
 
 
+def load_passage_embed(i, f_name, embedding_path):
+    with open(embedding_path + f'{f_name}_{i}.pkl', 'rb') as f:
+        return  (i, pickle.load(f))  # (key, value) pair
+
 
 def load_passage_embeddings(embedding_path):
-    def load_passage_embed(i):
-        with open(embedding_path + f'wiki2020embedding_{i}.pkl', 'rb') as f:
-            return  (i, pickle.load(f))  # (key, value) pair
-        
-    
-
-
-    
     embedding_data = []  # embedding can be accessed by simply using passage id
 
     # # NOTE: for debugging purpose, here we only load 20 passage embedding files
@@ -1222,17 +1219,21 @@ def load_passage_embeddings(embedding_path):
     #         embedding_data.extend(pickle.load(f))
 
     import multiprocessing as mp
-    pool = mp.Pool()
-    import pdb; pdb.set_trace()
-    embedding_d = dict(pool.map(load_passage_embed, range(50)))
+    pool = mp.Pool(20)
+    # import pdb; pdb.set_trace()
+    if "2020" in embedding_path:
+        f_name = "wiki2020embedding"
+    else:
+        f_name = "wikipedia_passages"
     
+    embedding_d = dict(pool.starmap_async(load_passage_embed, zip(range(50),[f_name]*50 , [embedding_path]*50 )  ).get()   )
+    pool.close()
+    pool.join()
+
     for i in tqdm(range(50)):
         embedding_data.extend(embedding_d[i])
-    # store them in a dictionary 
-    # dict[i] = embedding
-    
-    # then for loop it
-
+    # import pdb; pdb.set_trace()
+    # print("check if there is way to reduce RAM usage")
     return embedding_data
 
 class MyDataLoader(DataLoader):
@@ -1283,7 +1284,6 @@ class topKPassasages():
                 passages_path, wiki_split_path, parallel=True)
     
         self.passage_embeddings = passage_embedding
-        self.wiki_data = None
         
         if evaluate:
             # self.recall = self.evaluate_recall()
@@ -1423,15 +1423,14 @@ class topKPassasages():
         return (split_idx, wiki_data)
         
 
-
-    def write_wiki_data(self, split_idx, wiki_split_path, f_name,  num_p_per_split):
+    def write_wiki_data(self, split_idx, wiki_split_path, f_name,  num_p_per_split, wiki_data):
         with open(os.path.join(wiki_split_path, f_name + f"_{split_idx}.tsv"), 'w') as f_output:
             tsv_output = csv.writer(f_output, delimiter='\t')
-            for i in range(split_idx*num_p_per_split, min((split_idx+1)*num_p_per_split, len(self.wiki_data))):
-                tsv_output.writerow(self.wiki_data[i])
+            for i in range(split_idx*num_p_per_split, min((split_idx+1)*num_p_per_split, len(wiki_data))):
+                tsv_output.writerow(wiki_data[i])
 
 
-    def load_passages(self, passages_path, wiki_split_path, parallel = False):
+    def load_passages(self, passages_path, wiki_split_path, parallel = False) -> list:
         """[load, format passages ]
 
         Args:
@@ -1442,7 +1441,7 @@ class topKPassasages():
         """
         
         f_name = wiki_split_path.split("/")[-1]
-        num_split = 30
+        num_split = 30  # set to the number of threads on CPU
         # wiki_data = []
         import multiprocessing as mp
         # original passage file is binary file
@@ -1451,43 +1450,45 @@ class topKPassasages():
             if not os.path.exists(wiki_split_path):
                 os.makedirs(wiki_split_path)
             wiki_data_split = []
-            self.wiki_data = self.load_wiki_data(passages_path)
+            wiki_data = self.load_wiki_data(passages_path)
             # with open(passages_path, "rb") as fp:
             #     for line in fp.readlines():
             #         import pdb; pdb.set_trace()
             #         wiki_data.append(line.decode().strip().split("\t"))
             
-            num_p_per_split = len(self.wiki_data) // num_split
-            assert self.wiki_data[0] == ["id", "text", "title"]
+            num_p_per_split = len(wiki_data) // num_split
+            assert wiki_data[0] == ["id", "text", "title"]
 
             # save split files 
             import csv
 
-            pool = mp.Pool()
-            pool.starmap(self.write_wiki_data, zip(
-                range(num_split), [wiki_split_path]*num_split, [f_name]*num_split, [num_p_per_split]*num_split))
+            # pool = mp.Pool()
+            # pool.starmap(self.write_wiki_data, zip(
+            #     range(num_split), [wiki_split_path]*num_split, [f_name]*num_split, [num_p_per_split]*num_split))
+            for split_idx in range(num_split):
+                self.write_wiki_data(
+                    split_idx, wiki_split_path, f_name,  num_p_per_split, wiki_data)
 
-                # with open(os.path.join(wiki_split_path, f_name + f"_{split_idx}.tsv"), 'w') as f_output:
-                #     tsv_output = csv.writer(f_output, delimiter='\t')
-                #     for i in range(split_idx*num_p_per_split, min((split_idx+1)*num_p_per_split, len(wiki_data))):
-                #         import pdb; pdb.set_trace()
-                #         tsv_output.writerow(wiki_data[i])
             # TODO: don't we record passage id? id is just its index (we change it to 0 based)
         else:
             # load split files directly
             
-            pool = mp.Pool()
-            import pdb
-            pdb.set_trace()
+
+            # import pdb; pdb.set_trace() 
+            # print("check RAM usage before loading passages")
+            pool = mp.Pool(5)
+            wiki_data = []
             # use dictionary to presever the order
             passage_split_paths = [os.path.join(wiki_split_path, f_name + f"_{split_idx}.tsv") for split_idx in range(num_split)]
-            wiki_data_d = dict(pool.starmap(self.load_wiki_split, zip(
-                passage_split_paths,  range(num_split))  ))
+            wiki_data_d = dict(pool.starmap_async(self.load_wiki_split, zip(
+                passage_split_paths,  range(num_split))  ).get())
+            pool.close()
+            pool.join()
             for i in range(num_split):
                 wiki_data.extend(wiki_data_d[i])
         # transform
         wiki_data = [{"title": title, "text": text}
-                     for _, text, title in self.wiki_data[1:]]
+                     for _, text, title in wiki_data[1:]]
         return wiki_data
 
     def load_answer(self, data_path):

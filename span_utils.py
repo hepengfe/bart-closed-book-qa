@@ -27,7 +27,7 @@ def some_generic_load_pickle(d, path):
 
 
 def dump_pickle(input_data, question_metadata, question_ids, answer_data, answer_metadata, joined_answers, encoded_input_path):
-    
+         
     d = dict()
     d["encoded_input"] = input_data
     d["question_metadata"] = question_metadata
