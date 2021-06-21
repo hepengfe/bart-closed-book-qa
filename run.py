@@ -426,45 +426,32 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
         from collections import defaultdict
         # {question_idx : [pred_str1, pred_str2]}
         prediction_dict = defaultdict(lambda :[])
-        # for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-        #     if not args.passage_clustering:
-        #         import pdb; pdb.set_trace()
-        #         batch = [b.to(device) for b in batch]
-                
-        #         outputs = model.generate(input_ids=batch[0],
-        #                                 attention_mask=batch[1],
-        #                                 num_beams=dev_data.args.num_beams,
-        #                                 max_length=dev_data.args.max_output_length,
-        #                                 early_stopping=True,
-        #                                 )
-        #         # TODO: if it's logits then use decode function in span utils
-        #         for input_, output in zip(batch[0], outputs):
-        #             pred = dev_data.decode(output)
-        #             print("check prediction: ", pred)
-        #             predictions.append(pred)
-        #     else:
-        #         # bs x 2 (input id, attention) x #clusters
-        #         # output_metadata = []
-        #         outputs = []
 
 
-        #         input_ids=batch[0]
-        #         attention_mask=batch[1]
-        #         question_ids = batch[2]
-        #         input_ids = input_ids.to(device)
-        #         attention_mask = attention_mask.to(device)
+            # start_time = time.perf_counter()
+            # outputs = model.generate(input_ids=input_ids,
+            #                          attention_mask=attention_mask,
+            #                          num_beams=dev_data.args.num_beams,
+            #                          max_length=dev_data.args.max_output_length,
+            #                          early_stopping=True,
+            #                          use_cache = True
+            #                          )
+            # end_time = time.perf_counter()
+            # print(f"Start Time : {start_time}")
+            # print(f"End Time : {end_time}")
+            # print(f"Execution Time : {end_time - start_time:0.6f}")
 
-        #         outputs = model.generate(input_ids=input_ids,
-        #                                  attention_mask=attention_mask,
-        #                                  num_beams=dev_data.args.num_beams,
-        #                                  max_length=dev_data.args.max_output_length,
-        #                                  early_stopping=True,
-        #                                  )
-        #         for input_, output, q_id in zip(input_ids, outputs, question_ids):
-        #             pred = dev_data.decode(output)
-        #             print(f"check prediction for question {q_id}: ", pred)
-        #             prediction_dict[q_id].append(pred)
-        #             # predictions.append(pred) # no longer used
+            # start_time = time.perf_counter()
+            # outputs = model.generate(input_ids=input_ids,
+            #                 attention_mask=attention_mask,
+            #                 num_beams=dev_data.args.num_beams,
+            #                 max_length=dev_data.args.max_output_length,
+            #                 early_stopping=True,
+            #                 )
+            # end_time = time.perf_counter()
+            # print(f"Start Time : {start_time}")
+            # print(f"End Time : {end_time}")
+            # print(f"Execution Time : {end_time - start_time:0.6f}"
 
 
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
@@ -473,13 +460,17 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
             question_ids = batch[2]
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
+            import time
+
 
             outputs = model.generate(input_ids=input_ids,
                                      attention_mask=attention_mask,
                                      num_beams=dev_data.args.num_beams,
                                      max_length=dev_data.args.max_output_length,
                                      early_stopping=True,
+                                     use_cache = True
                                      )
+            
             if not args.passage_clustering:
                 for input_, output in zip(batch[0], outputs):
                     pred = dev_data.decode(output)
@@ -494,56 +485,68 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
 
 
-
-
-
-
-
-
         # second generation
         if args.passage_clustering:
-            # generate if no ids found in prediction_dict.keys()
-            # and 
-            import pdb;
-            pdb.set_trace()
-            print("second generation")
+            # remove empty string answers
+            for q_id in prediction_dict.keys():
+                prediction_dict[q_id] = [
+                    a for a in prediction_dict[q_id] if len(a.strip()) != 0]
 
 
-
-
-
-                # input_id_list = batch[0]
-                # attention_mask_list = batch[1]
-                # input_id_list = [input_ids.to(device)
-                #                  for input_ids in input_id_list]
-                # attention_mask_list = [attention_mask.to(
-                #     device) for attention_mask in attention_mask_list]
-                # for (idx, (input_ids, attention_mask)) in enumerate(zip(input_id_list, attention_mask_list)):
-                    
-                #     output_for_one_qp = model.generate(input_ids=input_ids,
-                #                                               attention_mask=attention_mask,
-                #                                               num_beams=dev_data.args.num_beams,
-                #                                               max_length=dev_data.args.max_output_length,
-                #                                               early_stopping=True,
-                #                                               )
-                #     outputs.append(output_for_one_qp)
-                    
-                # preds = [] # prediction for one question
-                # for output_for_one_qp in outputs:
-                #     # pred = [dev_data.decode(output) for output in outputs_for_one_question]
-                #     # NOTE: due to the special predict_bs_size=1, there is additional batch dimension
-                #     # NOTE: the reason is for this special data, each batch needs to 
-                #     pred = dev_data.decode(output_for_one_qp[0]) 
-                    
-                #     preds.append(pred)
+            # iterate all data again
+            for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
+                # if i == 20:
+                #     break
+                input_ids = batch[0]
+                attention_mask = batch[1]
+                question_ids = batch[2]
+                input_ids = input_ids.to(device)
+                attention_mask = attention_mask.to(device)
+                # new_input_ids = 
+                indices = []
+                qp_check_d = defaultdict(lambda :False)
+                for i, (input_, q_id) in enumerate(zip(input_ids, question_ids)):
+                    if len(prediction_dict[q_id]) == 0 and not qp_check_d[q_id]:
+                        indices.append(i)
+                        qp_check_d[q_id] = True
+                indices = torch.LongTensor(indices)
+                if len(indices) == 0:
+                    continue
                 
                 
-                # post process predictions
+                new_input_ids = input_ids[indices, :]
+                new_attention_mask = attention_mask[indices, :]
+                new_question_ids = []
+                for idx in indices:
+                    new_question_ids.append(question_ids[idx])
+                new_question_ids = tuple(new_question_ids)
+                 
+                import pdb; pdb.set_trace()
 
-                # preds = [p for p in preds if len(p) != 0]  # eliminate empty prediction
-                # preds = "<sep>".join(preds)
-                # print("check prediction: ", preds)
-                # predictions.append(preds)
+                # disallow generate empty strings will prevent 
+                # check if empty string id and sep token id is the same
+                new_outputs = model.generate(input_ids=new_input_ids,
+                                         attention_mask=new_attention_mask,
+                                         num_beams=dev_data.args.num_beams,
+                                         max_length=dev_data.args.max_output_length,
+                                         early_stopping=True,
+                                        bad_words_ids = [[2,0,0,0]]
+                                         )  # min_len =4  is about two words
+                print(new_outputs)
+                # filtered input ids
+                for input_, output, q_id in zip(new_input_ids, new_outputs, new_question_ids):
+                    pred = dev_data.decode(output)
+                    print(f"check new prediction for question {q_id}: ", pred)
+                    prediction_dict[q_id].append(pred)
+                
+        # for q_id in prediction_dict.keys():
+        #     print("number of valid answer: ", len([
+        #         a for a in prediction_dict[q_id] if len(a.strip()) != 0]))
+        #     prediction_dict[q_id] = [
+        #         a for a in prediction_dict[q_id] if len(a.strip()) != 0]
+            
+
+
         # PC eval: after all predictions
         if args.passage_clustering:
            
