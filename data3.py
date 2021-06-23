@@ -169,6 +169,11 @@ class QAData(object):
     def decode(self, tokens):
         return self.tokenizer.decode(tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True).lower()
 
+    def batch_decode(self, list_of_tokens):
+        return [pred.lower() for pred in self.tokenizer.batch_decode(list_of_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True)]
+
+
+
     def decode_batch(self, tokens):
         return [self.decode(_tokens) for _tokens in tokens]
 

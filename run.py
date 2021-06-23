@@ -14,6 +14,27 @@ from T5 import MyT5
 from tqdm import tqdm
 
 
+def parallel_generate(model, device, input_ids, attention_mask, num_beams, max_output_length):
+    input_ids = input_ids.to(device)
+    attention_mask = attention_mask.to(device)
+
+    outputs = model.generate(input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            num_beams=num_beams,
+                            max_length=max_output_length,
+                            early_stopping=False,
+                            use_cache=True
+                            )
+    return (device, outputs.to("cpu"))  # transfer output to device cpu, also might save some GPU memory
+
+
+def parallel_decode(output, dev_data, index, q_id=None):
+
+    pred = dev_data.decode(output)
+    return (index, (q_id, pred))
+
+
+
 
 def run(args, logger):
 
@@ -285,11 +306,9 @@ def run(args, logger):
     
     if args.do_predict:
         logger.info(f"[{args.model}] start prediction")
-        model.to(torch.device(args.device))
+        
+        
         model.eval()
-
-        if args.n_gpu > 1:
-            model = torch.nn.DataParallel(model)
 
         ems = inference(args, model, dev_data, args.predict_type,
                         device=args.device, is_ambig = is_ambig, save_predictions=True)
@@ -456,39 +475,114 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
             # print(f"Start Time : {start_time}")
             # print(f"End Time : {end_time}")
             # print(f"Execution Time : {end_time - start_time:0.6f}"
-
-
+        import copy
+        if args.n_gpu > 1:
+            model_on_devices = [copy.deepcopy(model).to(i) for i in range(args.n_gpu)]
+            # model_on_devices = [copy.deepcopy(model).to(0), model.to(1)]
+            # print([model.device for model in model_on_devices])
+            # exit()
+        import multiprocessing as mp
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
+            
+            
+            bs = len(batch[0])
+            assert bs % args.n_gpu == 0, "must be dividable?"
 
-            if args.n_gpu > 1:
-                device = "cuda"
-            else:
-                device = 0            
+
+            # move model to device 0 and device 1
+            # move input_ids, attention mask to device 0 and device 1
+            # concatenate outputs
+            # import pdb;pdb.set_trace()
+         
             input_ids = batch[0]
             attention_mask = batch[1]
             question_ids = batch[2]
-            input_ids = input_ids.to(device)
-            attention_mask = attention_mask.to(device)
 
-            outputs = model.generate(input_ids=input_ids,
-                                     attention_mask=attention_mask,
-                                     num_beams=dev_data.args.num_beams,
-                                     max_length=dev_data.args.max_output_length,
-                                     early_stopping=True,
-                                     use_cache = True
-                                     )
             
-            if not args.passage_clustering:
-                for input_, output in zip(batch[0], outputs):
-                    pred = dev_data.decode(output)
-                    print("check prediction: ", pred)
-                    predictions.append(pred)
+            if args.n_gpu > 1:
+                
+                mp.set_start_method('spawn', force= True)
+                # try:
+                #     mp.set_start_method('spawn')
+                # except RuntimeError:
+                #     pass
+                pool = mp.Pool(30)
+
+                devices = list(range(args.n_gpu))
+                bs_per_device = bs // args.n_gpu    
+                splitted_input_ids = [input_ids[i*bs_per_device: (i+1)*bs_per_device]
+                                      for i in range(args.n_gpu)]
+                splitted_attention_mask = [
+                    attention_mask[i*bs_per_device: (i+1)*bs_per_device] for i in range(args.n_gpu)]
+                parallel_gen_input = zip(model_on_devices, devices, splitted_input_ids, splitted_attention_mask,
+                                [dev_data.args.num_beams]*args.n_gpu, [dev_data.args.max_output_length]*args.n_gpu)
+                indexed_outputs = dict(pool.starmap(
+                    parallel_generate, parallel_gen_input))
+                outputs = []
+                for i in range(args.n_gpu):
+                    outputs.extend(indexed_outputs[i].tolist()) # tensor to list 
+
+                pool.close()
+                pool.join()
+
             else:
-                for input_, output, q_id in zip(input_ids, outputs, question_ids):
-                    pred = dev_data.decode(output)
-                    print(f"check prediction for question {q_id}: ", pred)
-                    prediction_dict[q_id].append(pred)
-                    # predictions.append(pred) # no longer used
+
+                input_ids = input_ids.to(device)
+                attention_mask = attention_mask.to(device)
+
+                outputs = model.generate(input_ids=input_ids,
+                                        attention_mask=attention_mask,
+                                        num_beams=dev_data.args.num_beams,
+                                        max_length=dev_data.args.max_output_length,
+                                        early_stopping=True,
+                                        use_cache = True
+                                        ).tolist()
+            if not args.passage_clustering:
+                preds = dev_data.batch_decode(outputs)
+                for pred in preds:
+                    print("check prediction: ", pred)
+                predictions.extend(preds)
+            else:
+                preds = dev_data.batch_decode(outputs)
+                for (idx, q_id) in enumerate(question_ids):
+                    print("check prediction: ", preds[idx])
+                    prediction_dict[q_id].append(preds[idx])
+
+
+                
+
+            # decode_pool = mp.Pool(32)  # parallel decode
+            # if not args.passage_clustering:
+            #     indexed_preds = dict(decode_pool.starmap(
+            #         parallel_decode, zip(outputs, [dev_data]*bs, range(bs))))
+
+            #     for index in range(len(input_ids)):
+            #         _, pred = indexed_preds[index]
+            #         print("check prediction: ", pred)
+            #         predictions.append(pred)
+
+                
+            #     # for input_, output in zip(batch[0], outputs):
+            #     #     pred = dev_data.decode(output)
+            #     #     print("check prediction: ", pred)
+            #     #     predictions.append(pred)
+            # else:
+            #     indexed_preds = dict(decode_pool.starmap(
+            #         parallel_decode, zip(outputs, [dev_data]*bs , range(bs), question_ids)))
+
+            #     for index in indexed_preds:
+            #         q_id, pred = indexed_preds[index]
+            #         print("check prediction: ", pred)
+            #         prediction_dict[q_id].append(pred)
+            # decode_pool.close()
+            # decode_pool.join()
+
+
+                # for input_, output, q_id in zip(input_ids, outputs, question_ids):
+                #     pred = dev_data.decode(output)
+                #     print(f"check prediction for question {q_id}: ", pred)
+                #     prediction_dict[q_id].append(pred)
+                #     # predictions.append(pred) # no longer used
 
 
 

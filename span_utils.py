@@ -93,6 +93,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
 
     
     # TODO: test ambig bart first
+    # TODO: dump dictionary
     # TODO: contrastive
     # TODO: provide more clustering analytics. Given a question, how is the clustering? 
         # top-k passages contain the answer and top-k passages doesn't contain the answer.
@@ -440,7 +441,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
         print("answers example: ", answers[:30])
         for (idx, joined_answers) in enumerate(joined_answers_l):
             data[idx]["answers"] = joined_answers
-    qpa_dict["q_n_p"] = questions
+    qpa_dict["qp"] = questions
     qpa_dict["answers"] = answers
     qpa_dict["question_metadata"] = question_metadata
     qpa_dict["answer_metadata"] = answer_metadata
