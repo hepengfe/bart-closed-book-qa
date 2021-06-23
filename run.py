@@ -8,7 +8,7 @@ import json
 from transformers import BartTokenizer, BartConfig, T5Tokenizer, T5Config, BertConfig, BertTokenizer , ElectraConfig,  ElectraTokenizer,  ElectraForQuestionAnswering
 from transformers import AdamW, get_linear_schedule_with_warmup
 
-from data2 import QAData
+from data3 import QAData
 from bart import MyBart 
 from T5 import MyT5
 from tqdm import tqdm
@@ -287,6 +287,10 @@ def run(args, logger):
         logger.info(f"[{args.model}] start prediction")
         model.to(torch.device(args.device))
         model.eval()
+
+        if args.n_gpu > 1:
+            model = torch.nn.DataParallel(model)
+
         ems = inference(args, model, dev_data, args.predict_type,
                         device=args.device, is_ambig = is_ambig, save_predictions=True)
         logger.info("%s on %s data: %.2f" %
@@ -455,13 +459,16 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
 
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
+
+            if args.n_gpu > 1:
+                device = "cuda"
+            else:
+                device = 0            
             input_ids = batch[0]
             attention_mask = batch[1]
             question_ids = batch[2]
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
-            import time
-
 
             outputs = model.generate(input_ids=input_ids,
                                      attention_mask=attention_mask,

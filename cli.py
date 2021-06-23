@@ -59,6 +59,7 @@ def main():
     parser.add_argument("--append_another_bos",
                         action='store_true', default=False)
     parser.add_argument("--prepend_question_token", default=False)
+    parser.add_argument("--is_contrastive", default=False, type=bool)
     # data augumentation
     parser.add_argument("--augment_k_times", type = str, default="1", help= "can be 'varied' or int value")
 
