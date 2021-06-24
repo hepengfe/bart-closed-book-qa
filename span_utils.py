@@ -182,6 +182,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
     # TODO: parallel evaluate 
     # TODO: T5 models evaluate
     # TODO: BART debug training see the performance
+    # TODO: number of pos examples and number of neg examples
 
     # TODO: contrastive
         # encode file name   (add contrastive, if not contrastive, don't add contrastive (keep it the same))
@@ -213,7 +214,8 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
 
     question_metadata = []
     joined_answers_l = []
-
+    empty_answer_str = "<s> </s>"
+    
 
     if not is_ambig: # nq dataset
         for i in tqdm(range(len(questions))):
@@ -282,7 +284,6 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                                         p["title"] + \
                                         spaced_sep_token + \
                                         p["text"]
-                        import pdb; pdb.set_trace()
                         pos_cluster_qp_concatenation += " </s> "
                         neg_cluster_qp_concatenation += " </s> "
                         qp_d["pos"].append(
@@ -444,7 +445,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                         num_eliminated_qp += 1  # not actually eliminated because
                         empty_answer_gen_ratio = 0.1
                         if np.random.rand() < empty_answer_gen_ratio: # randomly eliminate qp for empty answer
-                            empty_answer_str = "<s> </s>"
+                            
                             found_answer_for_qa_pair.append(
                                 empty_answer_str)
                             found_answers_for_one_qp.append(
@@ -467,23 +468,18 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
 
                         question_start_idx = len(new_questions)
                         new_questions.append(cur_qp_str)
+                        import pdb; pdb.set_trace()
                         question_end_idx = len(new_questions)
 
                         question_metadata.append(
                             (question_start_idx, question_end_idx))  # we actually added just a qp pair
                         answer_metadata.append(
                             (answer_start_idx, answer_end_idx))
+                        
                 # NOTE: we only add one data enty with PC and the answer presented in the PC
                 if args.is_contrastive and is_training:
-                    for (cluster_rank, cur_qp_str) in enumerate(cur_qp["neg"]):
-                        import pdb; pdb.set_trace()
-                        print("check neg samples")
-                        print(cluster_rank, found_answers_for_one_qp)
-                        empty_answer_str = "<s> </s>"
-                        # found_answer_for_qa_pair.append(
-                        #     empty_answer_str)
-                        # found_answers_for_one_qp.append(
-                        #     found_answer_for_qa_pair)
+                    for (cluster_rank, cur_qp_str) in enumerate(cur_qp["neg"]): 
+                        
                         answer_start_idx = len(new_answers)
                         # maintain its 1-D format
                         new_answers.append(empty_answer_str)
@@ -516,35 +512,91 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                     concatenated_answers = [concatenated_answers[i]
                                             for i in rnd_indices]
                 cur_answers = concatenated_answers
+                import pdb
+                pdb.set_trace()
+                if args.is_contrastive:
+                    # pos answer
+                    answer_start_idx = len(new_answers)
+                    # maintain its 1-D format
+                    new_answers.extend(cur_answers)
+                    answer_end_idx = len(new_answers)
 
-                answer_start_idx = len(new_answers)
-                # maintain its 1-D format
-                new_answers.extend(cur_answers)
-                answer_end_idx = len(new_answers)
+                    question_start_idx = len(new_questions)
+                    # rename for some clarity
+                    question_id = question_ids[idx]
 
-                question_start_idx = len(new_questions)
-
-                # rename for some clarity
-                question_id = question_ids[idx]
-                if args.passage_clustering:
                     # check cluster passages
-                    new_questions.extend(cur_qp)
+                    new_questions.extend(cur_qp["pos"])
                     question_indices.extend(
-                        [question_id] * len(cur_qp))
-                else:
-                    new_questions.append(cur_qp)  #
-                    question_indices.append(question_id)
-                # import pdb; pdb.set_trace()
-                # print("check first new_questions ")
-                question_end_idx = len(new_questions)
-                assert len(new_questions) == len(
-                    question_indices), "length shoudl be the same"
-                # TODO: find a way to save the question ids
+                        [question_id] * len(cur_qp["pos"]))
 
-                question_metadata.append(
-                    (question_start_idx, question_end_idx))
-                answer_metadata.append(
-                    (answer_start_idx, answer_end_idx))
+                    # import pdb; pdb.set_trace()
+                    # print("check first new_questions ")
+                    question_end_idx = len(new_questions)
+                    assert len(new_questions) == len(
+                        question_indices), "length shoudl be the same"
+                    # TODO: find a way to save the question ids
+
+                    question_metadata.append(
+                        (question_start_idx, question_end_idx))
+                    answer_metadata.append(
+                        (answer_start_idx, answer_end_idx))
+
+    
+                    # neg answers
+                    answer_start_idx = len(new_answers)
+                    # maintain its 1-D format
+                    new_answers.append(empty_answer_str)
+                    answer_end_idx = len(new_answers)
+
+                    question_start_idx = len(new_questions)
+                    # rename for some clarity
+                    question_id = question_ids[idx]
+
+                    # check cluster passages
+                    new_questions.extend(cur_qp["neg"])
+                    question_indices.extend(
+                        [question_id] * len(cur_qp["neg"]))
+
+                    # import pdb; pdb.set_trace()
+                    # print("check first new_questions ")
+                    question_end_idx = len(new_questions)
+                    assert len(new_questions) == len(
+                        question_indices), "length shoudl be the same"
+                    # TODO: find a way to save the question ids
+
+                    question_metadata.append(
+                        (question_start_idx, question_end_idx))
+                    answer_metadata.append(
+                        (answer_start_idx, answer_end_idx))
+                else:
+                    answer_start_idx = len(new_answers)
+                    # maintain its 1-D format
+                    new_answers.extend(cur_answers)
+                    answer_end_idx = len(new_answers)
+
+                    question_start_idx = len(new_questions)
+                    # rename for some clarity
+                    question_id = question_ids[idx]
+                    if args.passage_clustering:
+                        # check cluster passages
+                        new_questions.extend(cur_qp)
+                        question_indices.extend(
+                            [question_id] * len(cur_qp))
+                    else:
+                        new_questions.append(cur_qp)  #
+                        question_indices.append(question_id)
+                    # import pdb; pdb.set_trace()
+                    # print("check first new_questions ")
+                    question_end_idx = len(new_questions)
+                    assert len(new_questions) == len(
+                        question_indices), "length shoudl be the same"
+                    # TODO: find a way to save the question ids
+
+                    question_metadata.append(
+                        (question_start_idx, question_end_idx))
+                    answer_metadata.append(
+                        (answer_start_idx, answer_end_idx))
 
         if args.passage_clustering:
             import pdb
@@ -566,6 +618,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
         print("answers example: ", answers[:30])
         for (idx, joined_answers) in enumerate(joined_answers_l):
             data[idx]["answers"] = joined_answers
+
     qpa_dict["qp"] = questions
     qpa_dict["question_ids"] = question_ids
     qpa_dict["answers"] = answers
@@ -906,7 +959,6 @@ def decode(start_logits, end_logits, input_ids, tokenizer, top_k_answers, max_an
                     included.add(text)
             nbest = _nbest
             threshold = 0.1
-            import pdb; pdb.set_trace()
             _nbest = [p for p in nbest if p['log_softmax'] >= np.log(threshold)] # TODO: threshold
             for p in nbest:
                 p_l.append(p['log_softmax'])

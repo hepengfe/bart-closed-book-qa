@@ -562,6 +562,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                     print("check prediction: ", pred)
                 predictions.extend(preds)
             else:
+                import pdb; pdb.set_trace()
                 preds = dev_data.batch_decode(outputs)
                 for (idx, q_id) in enumerate(question_ids):
                     try:
@@ -609,7 +610,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
 
         # second generation
-        if args.passage_clustering:
+        if args.passage_clustering and not args.is_contrastive:
             # remove empty string answers
             for q_id in prediction_dict.keys():
                 prediction_dict[q_id] = [
@@ -662,12 +663,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                     print(f"check new prediction for question {q_id}: ", pred)
                     prediction_dict[q_id].append(pred)
                 
-        # for q_id in prediction_dict.keys():
-        #     print("number of valid answer: ", len([
-        #         a for a in prediction_dict[q_id] if len(a.strip()) != 0]))
-        #     prediction_dict[q_id] = [
-        #         a for a in prediction_dict[q_id] if len(a.strip()) != 0]
-            
+
 
 
         # PC eval: after all predictions

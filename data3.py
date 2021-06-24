@@ -496,10 +496,7 @@ class QAData(object):
                             self.logger.info(
                                 f"Avg num of passages per cluster: {num_passages/num_clusters}")
                         else: # no PC or PC but no clusteres passages
-
                             # load all passages embedding or 
-                            
-                            
                             self.init_top_k_passages() # init self.topKpassages
 
                             # concatenate question and passages
@@ -992,7 +989,7 @@ def load_passage_embeddings(embedding_path):
 class MyDataLoader(DataLoader):
 
     def __init__(self, args, dataset, is_training):
-        if is_training and not args.debug: 
+        if is_training : 
             sampler = RandomSampler(dataset)
             batch_size = args.train_batch_size
         else:
@@ -1057,7 +1054,8 @@ class topKPassasages():
         
         passage_embeddings = self.get_passage_embeddings(
             i)
-        kmeans_1 = KMeans(n_clusters=self.k, random_state=0).fit(passage_embeddings)
+        kmeans_1 = KMeans(n_clusters=self.k_cluster,
+                          random_state=0).fit(passage_embeddings)
         # from IPython import embed; embed()
 
 
