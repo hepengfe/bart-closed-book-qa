@@ -29,11 +29,12 @@ import logging
 import random
 import numpy as np
 import torch
-
+import multiprocessing as mp
 from run import run
 
 
 def main():
+    mp.set_start_method('spawn')
     parser = argparse.ArgumentParser()
 
     # Basic parameters

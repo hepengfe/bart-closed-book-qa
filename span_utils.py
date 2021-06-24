@@ -29,6 +29,74 @@ def some_generic_load_pickle(d, path):
     return d
 
 
+def eval(predictions, data, eval_fn, normaliza_fn,
+                  dataset_name, answer_type) -> list:
+    eval_scores = []
+    for (prediction, dp) in zip(predictions, data):
+        if dataset_name == "ambig":
+            if answer_type == "seq":
+
+                # useful when it's not parallel
+                if type(predictions) == defaultdict:
+                    # it's actually dictionary key, predictions is a dictionary here
+                    question_idx = prediction
+                    prediction = predictions[question_idx]
+                cur_answers = dp["answers"]
+
+                # f1 without duplication
+                prediction = prediction.replace(
+                    "<s>", "").replace("</s>", "").split("<sep>")
+                prediction = [normaliza_fn(pred)
+                                for pred in prediction]
+                prediction = [pred for pred in prediction if len(
+                    pred) != 0]  # remove empty prediction
+
+                max_f1 = np.max([eval_fn(list(set(cur_answer)), list(set(prediction)))
+                                    for cur_answer in cur_answers])
+
+                print(
+                    f"f1: {max_f1}  prediction: {prediction} cur_answer: {cur_answers[:10]}")
+                # NOTE: the only difference from span answer type
+                eval_scores.append(max_f1)
+
+            elif answer_type == "span":
+                cur_answer = []
+                for qa_d in dp["annotations"]:
+                    if qa_d["type"] == "singleAnswer":
+                        # answers.append(qa_d["answer"])
+                        cur_answer.extend(qa_d["answer"])
+                    elif qa_d["type"] == "multipleQAs":
+                        # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+                        pair_answers = []
+                        for pair in qa_d["qaPairs"]:
+                            pair_answers.extend(pair["answer"])
+                        cur_answer.extend(pair_answers)
+                    else:
+                        print("error in qa_d type: ")
+                        exit()
+                eval_scores.append(eval_fn(cur_answer, prediction))
+        elif dataset_name == "nq":
+            if answer_type == "seq":
+                for (prediction, dp) in zip(predictions, data):
+                    # there are many concatenation of answers and they are all correct
+                    # we append the one with the highest score
+
+                    eval_scores.append(eval_fn(
+                        prediction, dp["answer"]))
+            else:
+                for (prediction, dp) in zip(predictions, data):
+                    for pred in prediction:
+                        eval_scores.append(eval_fn(pred, dp["answer"]))
+    return eval_scores
+
+
+
+
+def is_answer_set_in_passsages(answer_md):
+    pass
+
+
+
 def is_answer_in_passages(answer_str, p_str):
     """check the existance of answer in passages by comparing string
 
@@ -94,10 +162,19 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
     
     # TODO: test ambig bart first
     # TODO: dump dictionary
+    # TODO: parallel evaluate 
+    # TODO: T5 models evaluate
+    # TODO: BART debug training see the performance
+
     # TODO: contrastive
+        # encode file name   (add contrastive, if not contrastive, don't add contrastive (keep it the same))
+        # tokenize file name 
+        # each cluster will have at most one positive example and at most one negative example 
+        # 
+    # 
     # TODO: provide more clustering analytics. Given a question, how is the clustering? 
         # top-k passages contain the answer and top-k passages doesn't contain the answer.
-    # 
+
 
 
     # -ambig(or say multi-answer dataset)
@@ -137,7 +214,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
         if args.passage_clustering:
             logger.info(
                 logging_prefix + "Concatenating clustering results...")
-            for i in tqdm(range(len(questions))):
+            for (i, cur_md) in enumerate(len(metadata)):
                 clusters_passages, num_cluster_for_question_i, num_passages_for_question_i = passages.get_clustered_passages(
                     i, rank_threshold)  # 2-d list
                 num_clusters += num_cluster_for_question_i
@@ -148,56 +225,56 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                 # and are not the actual input
 
 
-
-
-
-                # TODO: safely remove codes below
-                # all_qp_concatenation = questions[i]
-                
-                # # add concatenation of all in the first entry
-                # for p_cluster in clusters_passages:
-                #     all_qp_concatenation += " </s>  <s> "
-                #     for p in p_cluster:
-                #         # format: [CLS] question [SEP] title 1 [SEP] passages
-                #         all_qp_concatenation += spaced_sep_token + \
-                #             p["title"] + \
-                #             spaced_sep_token + \
-                #                 p["text"]
-
-                # all_qp_concatenation += " </s> "
-
-                # # cluster_qp_concatenation = questions[i]
-
-                # questions_with_clustered_passages.append(
-                #     []) # a new inner list
-                # questions_with_clustered_passages[i].append(
-                #     all_qp_concatenation)
-
-
-
-
                 questions_with_clustered_passages.append([]) # a new inner list
-
-                for p_cluster in clusters_passages:  # it's ordered
-                    # reset qp concatenation
-                    cluster_qp_concatenation = questions[i]
-                    cluster_qp_concatenation += " <s> "
-                    start = True
-                    for p in p_cluster:
-                        # format: [CLS] question [SEP] title 1 [SEP] passages
-                        if start:
-                            cluster_qp_concatenation += p["title"] + \
+                if args.is_contrastive:
+                    questions_with_clustered_passages.append(defaultdict(lambda : []))
+                    qp_d = questions_with_clustered_passages[-1]
+                    qp_d["pos"] = []
+                    qp_d["neg"] = []
+                    # 1. needs truncation here?  probably not, we can directly check. 
+                    # 2. check presence of answer. 
+                    for p_cluster in clusters_passages:  # it's ordered
+                        # reset qp concatenation
+                        cluster_qp_concatenation = questions[i]
+                        cluster_qp_concatenation += " </s>  <s>"
+                        start = True
+                        for p in p_cluster:
+                            # format: [CLS] question [SEP] title 1 [SEP] passages
+                            if start:
+                                cluster_qp_concatenation += p["title"] + \
+                                    spaced_sep_token + \
+                                    p["text"]
+                            else:
+                                cluster_qp_concatenation += spaced_sep_token + \
+                                    p["title"] + \
+                                    spaced_sep_token + \
+                                    p["text"]
+                            start = False
+                        cluster_qp_concatenation += " </s> "
+                        questions_with_clustered_passages[i].append(
+                            cluster_qp_concatenation)
+                else:
+                    questions_with_clustered_passages.append([])
+                    for p_cluster in clusters_passages:  # it's ordered
+                        # reset qp concatenation
+                        cluster_qp_concatenation = questions[i]
+                        cluster_qp_concatenation += " </s>  <s>"
+                        start = True
+                        for p in p_cluster:
+                            # format: [CLS] question [SEP] title 1 [SEP] passages
+                            if start:
+                                cluster_qp_concatenation += p["title"] + \
+                                    spaced_sep_token + \
+                                        p["text"]
+                            else:
+                                cluster_qp_concatenation += spaced_sep_token + \
+                            p["title"] + \
                                 spaced_sep_token + \
                                     p["text"]
-                        else:
-                            cluster_qp_concatenation += spaced_sep_token + \
-                        p["title"] + \
-                            spaced_sep_token + \
-                                p["text"]
-                        start = False
-                    cluster_qp_concatenation += " </s> "
-                    questions_with_clustered_passages[i].append(
-                        cluster_qp_concatenation)
+                            start = False
+                        cluster_qp_concatenation += " </s> "
+                        questions_with_clustered_passages[i].append(
+                            cluster_qp_concatenation)
             num_questions = len(questions)
             clustering_results = dict()
             clustering_results["num_clusters"] = num_clusters
@@ -442,6 +519,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
         for (idx, joined_answers) in enumerate(joined_answers_l):
             data[idx]["answers"] = joined_answers
     qpa_dict["qp"] = questions
+    qpa_dict["question_ids"] = question_ids
     qpa_dict["answers"] = answers
     qpa_dict["question_metadata"] = question_metadata
     qpa_dict["answer_metadata"] = answer_metadata

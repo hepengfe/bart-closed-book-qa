@@ -18,10 +18,11 @@ from collections import defaultdict
 
 from transformers.utils.dummy_pt_objects import load_tf_weights_in_funnel
 from bart import MyBartModel
-from span_utils import preprocess_span_input, preprocess_qpa, dump_pickle, load_pickle
+from span_utils import preprocess_span_input, eval, preprocess_qpa, dump_pickle, load_pickle
 
 from numpy import random
 from sklearn.cluster import KMeans
+import multiprocessing as mp
 
 
 
@@ -221,12 +222,14 @@ class QAData(object):
             self.logger.info(
                 self.logging_prefix + "Passage clustering takes all (top 100) passages")
             embedding_path = "data/wiki2020embedding/"
+
+            # passage_embedding = load_passage_embeddings(
+            #     embedding_path)
+            self.passages = topKPassasages(
+                self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path, passage_embedding=None)
             self.logger.info(
                 self.logging_prefix + "Loading passages embedding...")
-            passage_embedding = load_passage_embeddings(
-                embedding_path)
-            self.passages = topKPassasages(
-                self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path, passage_embedding=passage_embedding)
+            self.passages.set_passage_embeddings(load_passage_embeddings(embedding_path))
 
         else:
             self.passages = topKPassasages(
@@ -508,7 +511,7 @@ class QAData(object):
                                             self.logging_prefix, self.logger,
                                             self.args.rank_threshold, clustered_passages_path)
                             qp = qpa_dict["qp"]
-                            qpa_dict["q_n_p"] = questions
+                            self.question_ids = qpa_dict["question_ids"]
                             answers = qpa_dict["answers"]
                             question_metadata = qpa_dict["question_metadata"] 
                             answer_metadata = qpa_dict["answer_metadata"]
@@ -673,82 +676,138 @@ class QAData(object):
             self.answer_type = "seq"
         # import pdb; pdb.set_trace()
         assert len(predictions) == len(self), (len(predictions), len(self))
-        ems = []
-        f1s = []
+ 
+            
+        
+        parallel = True
+        if parallel:
+            num_eval_processes = 32
+            eval_pool = mp.Pool(num_eval_processes)
+            if type(predictions) == defaultdict:
+                question_indices = [key for key in predictions.keys()]
+                predictions = [predictions[q_idx]
+                               for q_idx in question_indices]
+              
+            num_entries_per_process = len(predictions) // num_eval_processes
+            preds_split = []
+            data_split = []
 
-        # TODO
-        if self.dataset_name == "ambig":
-            if self.answer_type == "seq":
-                for (prediction, dp) in zip(predictions, self.data):
-                    if type(predictions) == defaultdict:
-                        question_idx = prediction # it's actually dictionary key, predictions is a dictionary here
-                        prediction = predictions[question_idx]
-                    cur_answers = dp["answers"] 
-                    # for qa_d in dp["annotations"]:
-                    #     if qa_d["type"] == "singleAnswer":
-                    #         cur_answer.extend(qa_d["answer"])
-                    #     elif qa_d["type"] == "multipleQAs":
-                    #         pair_answers = []
-                    #         for pair in qa_d["qaPairs"]:
-                    #             pair_answers.extend(pair["answer"])
-                    #         cur_answer.extend(pair_answers)
-                    #     else:
-                    #         self.logger.warn("error in qa_d type: ")
-                    #         exit()
-                   
-                    # import pdb; pdb.set_trace()
-
-                    # regular f1
-                    # prediction = prediction.replace(
-                        # "<s>", "").replace("</s>", "").split("<sep>")
-                    # max_f1 = np.max( [get_f1(cur_answer, prediction)  for cur_answer in cur_answers])
-
-                    # f1 with out duplication
-                    prediction=prediction.replace(
-                        "<s>", "").replace("</s>", "").split("<sep>")
-                    prediction = [normalize_answer(pred) for pred in prediction] 
-                    prediction = [pred for pred in prediction if len(pred) != 0 ] # remove empty prediction
-
-
-
-                    max_f1 = np.max([get_f1(list(set(cur_answer)), list(set(prediction)))
-                                     for cur_answer in cur_answers] ) 
-
+            # partition eval data
+            for i in range(num_eval_processes):
+                if i == num_eval_processes - 1:
+                    preds_split.append(predictions[i*num_entries_per_process:])
+                    data_split.append(self.data[i*num_entries_per_process:])
+                    break
+                preds_split.append(
+                    predictions[i *
+                                num_entries_per_process:(i+1)*num_entries_per_process]
+                )
+                data_split.append(
+                    self.data[i *
+                            num_entries_per_process:(i+1)*num_entries_per_process]
+                )
+            import pdb
+            pdb.set_trace()
+            if self.dataset_name == "ambig":
+                f1s = [eval_pool.starmap(eval, zip(preds_split, data_split, [get_f1]*num_eval_processes, [
+                    normalize_answer]*num_eval_processes,
+                    [self.dataset_name]*num_eval_processes,
+                    [self.answer_type]*num_eval_processes,
+                    ))]
+                f1s = [f1 for f1_l in f1s for f1 in f1_l ]
 
 
-                    print(f"f1: {max_f1}  prediction: {prediction} cur_answer: {cur_answers[:10]}")
-                    # NOTE: the only difference from span answer type
-                    f1s.append(max_f1)
-            else:
-                for (prediction, dp) in zip(predictions, self.data):
-                    cur_answer =[]
-                    for qa_d in dp["annotations"]:
-                        if qa_d["type"] == "singleAnswer":
-                            # answers.append(qa_d["answer"])
-                            cur_answer.extend(qa_d["answer"])
-                        elif qa_d["type"] == "multipleQAs":
-                            # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
-                            pair_answers = []
-                            for pair in qa_d["qaPairs"]:
-                                pair_answers.extend(pair["answer"])
-                            cur_answer.extend(pair_answers)
-                        else:
-                            self.logger.warn("error in qa_d type: ")
-                            exit()
-                    f1s.append(get_f1(cur_answer, prediction))
+
+
+            elif self.dataset_name == "nq":
+                f1s = eval_pool.starmap(eval, zip(preds_split, data_split, [get_exact_match]*num_eval_processes, [
+                    normalize_answer]*num_eval_processes,
+                    [self.dataset_name]*num_eval_processes,
+                    [self.answer_type]*num_eval_processes))
+                f1s = [f1 for f1_l in f1s for f1 in f1_l]
+            eval_pool.close()
+            eval_pool.joiin()
             return f1s
-        elif self.dataset_name == "nq":
-            if self.answer_type == "seq":
-                for (prediction, dp) in zip(predictions, self.data):
-                    # there are many concatenation of answers and they are all correct
-                    # we append the one with the highest score
-                    
-                    ems.append(get_exact_match(prediction, dp["answer"]))
-            else:
-                for (prediction, dp) in zip(predictions, self.data):
-                    for pred in prediction:
-                        ems.append(get_exact_match(pred, dp["answer"]))
+        else:
+            if self.dataset_name == "ambig":
+                ems = eval(predictions, self.data, get_f1, normalize_answer, self.dataset_name, self.answer_type)
+            elif self.dataset_name == "nq":
+                ems = eval(predictions, self.data, get_f1, normalize_answer,
+                     self.dataset_name, self.answer_type)
             return ems
+
+
+            # if self.answer_type == "seq":
+            #     for (prediction, dp) in zip(predictions, self.data):
+            #         # there are many concatenation of answers and they are all correct
+            #         # we append the one with the highest score
+                    
+            #         results = ems.append(get_exact_match(prediction, dp["answer"]))
+            # else:
+            #     for (prediction, dp) in zip(predictions, self.data):
+            #         for pred in prediction:
+            #             ems.append(get_exact_match(pred, dp["answer"]))
+            # return ems
+
+        # # TODO
+        # if self.dataset_name == "ambig":
+        #     if self.answer_type == "seq":
+        #         for (prediction, dp) in zip(predictions, self.data):
+        #             if type(predictions) == defaultdict:
+        #                 question_idx = prediction # it's actually dictionary key, predictions is a dictionary here
+        #                 prediction = predictions[question_idx]
+        #             cur_answers = dp["answers"] 
+
+
+        #             # f1 without duplication
+        #             prediction=prediction.replace(
+        #                 "<s>", "").replace("</s>", "").split("<sep>")
+        #             prediction = [normalize_answer(pred) for pred in prediction] 
+        #             prediction = [pred for pred in prediction if len(pred) != 0 ] # remove empty prediction
+
+        #             max_f1 = np.max([get_f1(list(set(cur_answer)), list(set(prediction)))
+        #                              for cur_answer in cur_answers] ) 
+
+
+
+        #             print(f"f1: {max_f1}  prediction: {prediction} cur_answer: {cur_answers[:10]}")
+        #             # NOTE: the only difference from span answer type
+        #             f1s.append(max_f1)
+        #     else:
+        #         for (prediction, dp) in zip(predictions, self.data):
+        #             cur_answer =[]
+        #             for qa_d in dp["annotations"]:
+        #                 if qa_d["type"] == "singleAnswer":
+        #                     # answers.append(qa_d["answer"])
+        #                     cur_answer.extend(qa_d["answer"])
+        #                 elif qa_d["type"] == "multipleQAs":
+        #                     # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
+        #                     pair_answers = []
+        #                     for pair in qa_d["qaPairs"]:
+        #                         pair_answers.extend(pair["answer"])
+        #                     cur_answer.extend(pair_answers)
+        #                 else:
+        #                     self.logger.warn("error in qa_d type: ")
+        #                     exit()
+        #             f1s.append(get_f1(cur_answer, prediction))
+        #     return f1s
+        # elif self.dataset_name == "nq":
+        #     if self.answer_type == "seq":
+        #         for (prediction, dp) in zip(predictions, self.data):
+        #             # there are many concatenation of answers and they are all correct
+        #             # we append the one with the highest score
+                    
+        #             ems.append(get_exact_match(prediction, dp["answer"]))
+        #     else:
+        #         for (prediction, dp) in zip(predictions, self.data):
+        #             for pred in prediction:
+        #                 ems.append(get_exact_match(pred, dp["answer"]))
+        #     return ems
+
+
+
+
+
         # def get_exact_match(prediction, groundtruth):
         # if type(groundtruth)==list:
         #     if len(groundtruth)==0:
@@ -859,6 +918,9 @@ class QAGenDataset(Dataset):
 
     def __getitem__(self, idx):
         if not self.is_training:
+            assert len(self.input_ids) == len(
+                self.attention_mask) == len(self.question_ids), ( len(self.input_ids), len(
+                    self.attention_mask), len(self.question_ids))
             # if self.passage_clustering:
             #     indices = self.in_metadata[idx]
             #     # import pdb; pdb.set_trace()
@@ -890,33 +952,44 @@ class QAGenDataset(Dataset):
 
 def load_passage_embed(i, f_name, embedding_path):
     with open(embedding_path + f'{f_name}_{i}.pkl', 'rb') as f:
-        return  (i, pickle.load(f))  # (key, value) pair
+        return (i, [item[1] for item in pickle.load(f)])  # (key, value) pair
 
 
 def load_passage_embeddings(embedding_path):
     embedding_data = []  # embedding can be accessed by simply using passage id
 
     # # NOTE: for debugging purpose, here we only load 20 passage embedding files
-    # for i in tqdm(range(50)):
-    #     with open(embedding_path + f'wiki2020embedding_{i}.pkl', 'rb') as f:
-    #         embedding_data.extend(pickle.load(f))
-
-    import multiprocessing as mp
-    pool = mp.Pool(20)
-    # import pdb; pdb.set_trace()
+    
+    
     if "2020" in embedding_path:
         f_name = "wiki2020embedding"
     else:
         f_name = "wikipedia_passages"
-    
-    embedding_d = dict(pool.starmap_async(load_passage_embed, zip(range(50),[f_name]*50 , [embedding_path]*50 )  ).get()   )
-    pool.close()
-    pool.join()
 
-    for i in tqdm(range(50)):
-        embedding_data.extend(embedding_d[i])
+    # TODO: parallel process freezes for some reason. It first reaches some peak ram and then dropped and freezed
+    # Also, the peak ram costs 70-120GB, it's safer not to use parallel to loading wiki_embed after loading wiki passages.
+    parallel = False   
+
+    if not parallel:
+        for i in range(50):
+            # import pdb; pdb.set_trace()
+            embedding_data.extend(load_passage_embed(i, f_name, embedding_path)[1]
+                )
+            # import pdb; pdb.set_trace()
+    else:
+        pool = mp.get_context("spawn").Pool(2)
+        # pool = mp.Pool(7)
+        # embedding_d = dict(pool.starmap(load_passage_embed, zip(range(50),[f_name]*50 , [embedding_path]*50 )  )  )
+        embedding_d = dict(pool.starmap_async(load_passage_embed, zip(
+            range(50), [f_name]*50, [embedding_path]*50)).get())
+        pool.close()
+        pool.join()
+        print("organize parallel loaded embedding")
+        for i in tqdm(range(50)):
+            embedding_data.extend(embedding_d[i])
     # import pdb; pdb.set_trace()
     # print("check if there is way to reduce RAM usage")
+    print("finished loading embedding data")
     return embedding_data
 
 class MyDataLoader(DataLoader):
@@ -973,9 +1046,8 @@ class topKPassasages():
             self.evaluate_macro_avg_recall()
         # only keep top k passages during initialization
 
-        print("end of top k passages class")
-
-
+    def set_passage_embeddings(self, passage_embeddings):
+        self.passage_embeddings = passage_embeddings
     
     def get_clustered_passages(self, i, rank_threshold):
         """Indexed on quesiton id and return clusters of passages
@@ -1074,14 +1146,14 @@ class topKPassasages():
     def get_passage_embeddings(self, i):
         assert self.passage_embeddings is not None, "passage embedding is not loaded"
         passage_embeddings = []
-        
+         
         for passage_id in self.ranks[i]:
             try:
                 passage_embeddings.append(self.passage_embeddings[passage_id])
             except IndexError:
                 print("index error")
                 continue
-        passage_embeddings = [embed[1] for embed in passage_embeddings]
+        # passage_embeddings = [embed[1] for embed in passage_embeddings]
         return passage_embeddings
         # return [self.passage_embeddings[passage_id][1] for passage_id in self.ranks[i]]
 
@@ -1155,7 +1227,8 @@ class topKPassasages():
 
             # import pdb; pdb.set_trace() 
             # print("check RAM usage before loading passages")
-            pool = mp.Pool(32)
+            # pool = mp.Pool(20)
+            pool = mp.get_context("spawn").Pool(32)
             wiki_data = []
             # use dictionary to presever the order
             passage_split_paths = [os.path.join(wiki_split_path, f_name + f"_{split_idx}.tsv") for split_idx in range(num_split)]

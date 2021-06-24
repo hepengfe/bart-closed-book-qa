@@ -22,7 +22,7 @@ def parallel_generate(model, device, input_ids, attention_mask, num_beams, max_o
                             attention_mask=attention_mask,
                             num_beams=num_beams,
                             max_length=max_output_length,
-                            early_stopping=False,
+                            early_stopping=True,
                             use_cache=True
                             )
     return (device, outputs.to("cpu"))  # transfer output to device cpu, also might save some GPU memory
@@ -33,12 +33,14 @@ def parallel_decode(output, dev_data, index, q_id=None):
     pred = dev_data.decode(output)
     return (index, (q_id, pred))
 
+def parallel_eval(eval_fn, partial_preds, partial_data):
+    pass
 
 
 
 def run(args, logger):
 
-
+    
     # load tokenizer
     if args.predict_type.lower() == "spanseqgen":
         if args.model.lower() == "bart":
@@ -486,7 +488,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
             
             
             bs = len(batch[0])
-            assert bs % args.n_gpu == 0, "must be dividable?"
+            # assert bs % args.n_gpu == 0, "must be dividable?"
 
 
             # move model to device 0 and device 1
@@ -501,7 +503,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
             
             if args.n_gpu > 1:
                 
-                mp.set_start_method('spawn', force= True)
+                # mp.set_start_method('spawn', force= True)
                 # try:
                 #     mp.set_start_method('spawn')
                 # except RuntimeError:
@@ -510,10 +512,25 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
                 devices = list(range(args.n_gpu))
                 bs_per_device = bs // args.n_gpu    
-                splitted_input_ids = [input_ids[i*bs_per_device: (i+1)*bs_per_device]
-                                      for i in range(args.n_gpu)]
-                splitted_attention_mask = [
-                    attention_mask[i*bs_per_device: (i+1)*bs_per_device] for i in range(args.n_gpu)]
+                # splitted_input_ids = [input_ids[i*bs_per_device: min((i+1)*bs_per_device, bs)]
+                #                       for i in range(args.n_gpu)]
+
+                # splitted_attention_mask = [
+                #     attention_mask[i*bs_per_device: (i+1)*bs_per_device] for i in range(args.n_gpu)]
+                splitted_input_ids = []
+                splitted_attention_mask = []
+                for i in range(args.n_gpu):
+                    if i == args.n_gpu - 1:
+                        splitted_input_ids.append(input_ids[i*bs_per_device:])
+                        splitted_attention_mask.append(
+                            attention_mask[i*bs_per_device: ])
+                        break
+                    splitted_input_ids.append(input_ids[i*bs_per_device: (i+1)*bs_per_device] )
+                    splitted_attention_mask.append(
+                        attention_mask[i*bs_per_device: (i+1)*bs_per_device])
+                    
+                        
+
                 parallel_gen_input = zip(model_on_devices, devices, splitted_input_ids, splitted_attention_mask,
                                 [dev_data.args.num_beams]*args.n_gpu, [dev_data.args.max_output_length]*args.n_gpu)
                 indexed_outputs = dict(pool.starmap(
@@ -537,6 +554,8 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                                         early_stopping=True,
                                         use_cache = True
                                         ).tolist()
+            assert len(outputs) == len(question_ids) == len(
+                attention_mask), (len(outputs), len(question_ids), len(attention_mask))
             if not args.passage_clustering:
                 preds = dev_data.batch_decode(outputs)
                 for pred in preds:
@@ -545,8 +564,11 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
             else:
                 preds = dev_data.batch_decode(outputs)
                 for (idx, q_id) in enumerate(question_ids):
-                    print("check prediction: ", preds[idx])
-                    prediction_dict[q_id].append(preds[idx])
+                    try:
+                        print(f"check prediction {q_id}: ", preds[idx])
+                        prediction_dict[q_id].append(preds[idx])
+                    except IndexError:
+                        import pdb; pdb.set_trace()
 
 
                 
