@@ -225,15 +225,13 @@ class QAData(object):
 
             # passage_embedding = load_passage_embeddings(
             #     embedding_path)
-            self.passages = topKPassasages(
-                self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path, passage_embedding=None)
+            self.passages = topKPassasages(self.args.k_cluster, self.wiki_passage_path, self.ranking_path, self.data_path, passage_embedding=None)
             self.logger.info(
                 self.logging_prefix + "Loading passages embedding...")
             self.passages.set_passage_embeddings(load_passage_embeddings(embedding_path))
 
         else:
-            self.passages = topKPassasages(
-                self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path)
+            self.passages = topKPassasages(self.args.k_cluster, self.wiki_passage_path, self.ranking_path, self.data_path)
 
     def load_dataset(self, tokenizer, do_return=False):
         self.logging_prefix = f"[{self.dataset_type} data]\t".upper()
@@ -262,6 +260,8 @@ class QAData(object):
         
         if self.args.passage_clustering:
             postfix += "_clustered"
+        if self.args.is_contrastive:
+            postfix += "_contrastive"
 
         # TODO: decide to delete tokenized path if it's finally not needed
         tokenized_path = os.path.join(
@@ -706,18 +706,15 @@ class QAData(object):
                     self.data[i *
                             num_entries_per_process:(i+1)*num_entries_per_process]
                 )
-            import pdb
-            pdb.set_trace()
+            # import pdb
+            # pdb.set_trace()
             if self.dataset_name == "ambig":
-                f1s = [eval_pool.starmap(eval, zip(preds_split, data_split, [get_f1]*num_eval_processes, [
+                f1s = eval_pool.starmap(eval, zip(preds_split, data_split, [get_f1]*num_eval_processes, [
                     normalize_answer]*num_eval_processes,
                     [self.dataset_name]*num_eval_processes,
                     [self.answer_type]*num_eval_processes,
-                    ))]
-                f1s = [f1 for f1_l in f1s for f1 in f1_l ]
-
-
-
+                    ))
+                f1s = [f1 for f1_l in f1s for f1 in f1_l ] # flatten
 
             elif self.dataset_name == "nq":
                 f1s = eval_pool.starmap(eval, zip(preds_split, data_split, [get_exact_match]*num_eval_processes, [
@@ -726,7 +723,7 @@ class QAData(object):
                     [self.answer_type]*num_eval_processes))
                 f1s = [f1 for f1_l in f1s for f1 in f1_l]
             eval_pool.close()
-            eval_pool.joiin()
+            eval_pool.join()
             return f1s
         else:
             if self.dataset_name == "ambig":
@@ -1013,7 +1010,7 @@ class topKPassasages():
     This class serves as a modular way of retrieving top k passages of a question for reader
     """
 
-    def __init__(self, k, passages_path, rank_path, data_path, passage_embedding = None, evaluate=False):
+    def __init__(self, k_cluster, passages_path, rank_path, data_path, passage_embedding = None, evaluate=False):
         # load wiki passages and store in dictionary
 
         # a list of lists of passsages ids   [ [ 3,5, ], ...  ]
@@ -1040,7 +1037,7 @@ class topKPassasages():
                 passages_path, wiki_split_path, parallel=True)
     
         self.passage_embeddings = passage_embedding
-        
+        self.k_cluster  = k_cluster
         if evaluate:
             # self.recall = self.evaluate_recall()
             self.evaluate_macro_avg_recall()
@@ -1060,7 +1057,7 @@ class topKPassasages():
         
         passage_embeddings = self.get_passage_embeddings(
             i)
-        kmeans_1 = KMeans(n_clusters=10, random_state=0).fit(passage_embeddings)
+        kmeans_1 = KMeans(n_clusters=self.k, random_state=0).fit(passage_embeddings)
         # from IPython import embed; embed()
 
 
@@ -1083,7 +1080,7 @@ class topKPassasages():
             else:
                 cluster_ranks[cluster_label] = j 
         # average ranks
-        for j in range(10):
+        for j in range(self.k_cluster):
             cluster_ranks[j] /= cluster_pts_count[j]
         
         sorted_cluster_ranks=  sorted(cluster_ranks.items(),

@@ -569,7 +569,7 @@ class QAData(object):
                             self.logger.info(
                                 logging_prefix + "Concatenating questions and passages...")
                             preprocess_qpa(questions, self.passages, answers, 
-                                            args.top_k_passages, 
+                                            self.args.top_k_passages, 
                                             self.answer_type, self.is_ambig, self.args.passage_clustering, False, logging_prefix, self.logger)
                             if self.args.passage_clustering:
                                 

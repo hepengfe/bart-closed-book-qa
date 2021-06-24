@@ -60,7 +60,7 @@ def main():
     parser.add_argument("--append_another_bos",
                         action='store_true', default=False)
     parser.add_argument("--prepend_question_token", default=False)
-    parser.add_argument("--is_contrastive", default=False, type=bool)
+
     # data augumentation
     parser.add_argument("--augment_k_times", type = str, default="1", help= "can be 'varied' or int value")
 
@@ -126,7 +126,9 @@ def main():
     # passage clustering
     parser.add_argument("--passage_clustering",
                         default=False, action="store_true")
-    parser.add_argument("--rank_threshold", default=40, type=int)
+    parser.add_argument("--k_cluster", default = 10, type=int) 
+    parser.add_argument("--rank_threshold", default=60, type=int)
+    parser.add_argument("--is_contrastive", default=False, action="store_true")
 
 
     # reset parameters
@@ -140,6 +142,12 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir, exist_ok=True)
     
+
+
+
+    # contrastive
+    if args.is_contrastive:
+        assert args.passage_clustering == True, "PC must be enable to train a contrastive dataset"
     
 
     # Start writing logs
