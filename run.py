@@ -370,13 +370,6 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 loss = model(input_ids=batch[0], attention_mask=batch[1],
                              decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
                              is_training=True)
-                # # import pdb;
-                # # pdb.set_trace()
-                # # output = model(input_ids=batch[0], attention_mask=batch[1],
-                # #              decoder_input_ids=batch[2], decoder_attention_mask=batch[3],
-                # #              is_training=False)
-                # print("check decoder input ids and input ids, check outputs without training mode as well")
-                
             elif args.predict_type.lower() == "spanextraction":
                 loss = model(input_ids=batch[0],  attention_mask=batch[1],
                              token_type_ids=batch[2],
@@ -404,9 +397,21 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
             # eval
             if global_step % args.eval_period == 0:
                 model.eval()
+                import pdb; pdb.set_trace()
+                print("check what causes memory leaking")
+                
                 logger.info(f"Start evaluating at global step {global_step}")
-                curr_em = inference(args, get_model(model, args.device), dev_data,
-                                    args.predict_type, device=args.device, is_ambig=get_model(model, args.device).is_ambig, save_predictions=True)
+                model = get_model(model, args.device).to("cpu")
+                del batch
+                # it will clean two things. 
+                # 1. Model parameters(after model is moved to cpu)
+                # 2. gradients info during training
+                assert args.gradient_accumulation_steps == 1, "it's safe to empty cache only when gradient_accumulation_steps is one"
+                torch.cuda.empty_cache()  
+                # curr_em = inference(args, get_model(model, args.device), dev_data,
+                #                     args.predict_type, device=args.device, is_ambig=get_model(model, args.device).is_ambig, save_predictions=True)
+                curr_em = inference(args, model, dev_data,
+                                    args.predict_type, device=args.device, is_ambig=model.is_ambig, save_predictions=True)
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
                     global_step,
                     np.mean(train_losses),
@@ -416,7 +421,9 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 epoch_ems[epoch] = str(curr_em*100)
                 train_losses = []
                 if best_accuracy < curr_em:
-                    get_model(model, args.device).save_pretrained(args.output_dir)
+                    # get_model(model, args.device).save_pretrained(args.output_dir)
+                    model.save_pretrained(
+                        args.output_dir)
                     checkpoint_stat["best_epoch"] = epoch
                     checkpoint_stat["best_em_accuracy"] = curr_em
                     checkpoint_stat["global_step"] = global_step
@@ -432,6 +439,9 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                     if wait_step >= args.wait_step:
                         stop_training = True
                         break
+                model = torch.nn.DataParallel(model)
+                model = model.to(torch.device(args.device))
+
                 model.train()
             epoch_losses[epoch] = str(np.mean(train_losses))
         with open(os.path.join(args.output_dir, f"{args.model}_bs{args.train_batch_size}.json"), "w") as fp:
@@ -562,7 +572,6 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                     print("check prediction: ", pred)
                 predictions.extend(preds)
             else:
-                import pdb; pdb.set_trace()
                 preds = dev_data.batch_decode(outputs)
                 for (idx, q_id) in enumerate(question_ids):
                     try:
