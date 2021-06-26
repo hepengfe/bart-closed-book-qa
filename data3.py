@@ -743,61 +743,6 @@ class QAData(object):
             #             ems.append(get_exact_match(pred, dp["answer"]))
             # return ems
 
-        # # TODO
-        # if self.dataset_name == "ambig":
-        #     if self.answer_type == "seq":
-        #         for (prediction, dp) in zip(predictions, self.data):
-        #             if type(predictions) == defaultdict:
-        #                 question_idx = prediction # it's actually dictionary key, predictions is a dictionary here
-        #                 prediction = predictions[question_idx]
-        #             cur_answers = dp["answers"] 
-
-
-        #             # f1 without duplication
-        #             prediction=prediction.replace(
-        #                 "<s>", "").replace("</s>", "").split("<sep>")
-        #             prediction = [normalize_answer(pred) for pred in prediction] 
-        #             prediction = [pred for pred in prediction if len(pred) != 0 ] # remove empty prediction
-
-        #             max_f1 = np.max([get_f1(list(set(cur_answer)), list(set(prediction)))
-        #                              for cur_answer in cur_answers] ) 
-
-
-
-        #             print(f"f1: {max_f1}  prediction: {prediction} cur_answer: {cur_answers[:10]}")
-        #             # NOTE: the only difference from span answer type
-        #             f1s.append(max_f1)
-        #     else:
-        #         for (prediction, dp) in zip(predictions, self.data):
-        #             cur_answer =[]
-        #             for qa_d in dp["annotations"]:
-        #                 if qa_d["type"] == "singleAnswer":
-        #                     # answers.append(qa_d["answer"])
-        #                     cur_answer.extend(qa_d["answer"])
-        #                 elif qa_d["type"] == "multipleQAs":
-        #                     # answers.append(pair["answer"]) for pair in qa_d["qaPairs"]]
-        #                     pair_answers = []
-        #                     for pair in qa_d["qaPairs"]:
-        #                         pair_answers.extend(pair["answer"])
-        #                     cur_answer.extend(pair_answers)
-        #                 else:
-        #                     self.logger.warn("error in qa_d type: ")
-        #                     exit()
-        #             f1s.append(get_f1(cur_answer, prediction))
-        #     return f1s
-        # elif self.dataset_name == "nq":
-        #     if self.answer_type == "seq":
-        #         for (prediction, dp) in zip(predictions, self.data):
-        #             # there are many concatenation of answers and they are all correct
-        #             # we append the one with the highest score
-                    
-        #             ems.append(get_exact_match(prediction, dp["answer"]))
-        #     else:
-        #         for (prediction, dp) in zip(predictions, self.data):
-        #             for pred in prediction:
-        #                 ems.append(get_exact_match(pred, dp["answer"]))
-        #     return ems
-
 
 
 

@@ -183,6 +183,8 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
     # TODO: T5 models evaluate
     # TODO: BART debug training see the performance
     # TODO: number of pos examples and number of neg examples
+    # TODO: check where the 5gb GPU memory comes from by setting pdb
+        # something in training mode (as in prediciton mode there is no such a memory)
 
     # TODO: contrastive
         # encode file name   (add contrastive, if not contrastive, don't add contrastive (keep it the same))
@@ -546,7 +548,9 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                     # neg answers
                     answer_start_idx = len(new_answers)
                     # maintain its 1-D format
-                    new_answers.append(empty_answer_str)
+                    new_answers.append(empty_answer_str) 
+                    # it won't be part of evaluation actually (will be normalized or say elimiated)
+                    # but it helps appending questions wtih false positve passage that's appended 
                     answer_end_idx = len(new_answers)
 
                     question_start_idx = len(new_questions)

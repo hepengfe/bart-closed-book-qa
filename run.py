@@ -654,7 +654,6 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                     new_question_ids.append(question_ids[idx])
                 new_question_ids = tuple(new_question_ids)
                  
-                import pdb; pdb.set_trace()
 
                 # disallow generate empty strings will prevent 
                 # check if empty string id and sep token id is the same
