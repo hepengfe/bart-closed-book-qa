@@ -562,7 +562,8 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                                         num_beams=dev_data.args.num_beams,
                                         max_length=dev_data.args.max_output_length,
                                         early_stopping=True,
-                                        use_cache = True
+                                        use_cache = True,
+                                        return_dict_in_generate = True,
                                         ).tolist()
             assert len(outputs) == len(question_ids) == len(
                 attention_mask), (len(outputs), len(question_ids), len(attention_mask))
@@ -579,43 +580,6 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                         prediction_dict[q_id].append(preds[idx])
                     except IndexError:
                         import pdb; pdb.set_trace()
-
-
-                
-
-            # decode_pool = mp.Pool(32)  # parallel decode
-            # if not args.passage_clustering:
-            #     indexed_preds = dict(decode_pool.starmap(
-            #         parallel_decode, zip(outputs, [dev_data]*bs, range(bs))))
-
-            #     for index in range(len(input_ids)):
-            #         _, pred = indexed_preds[index]
-            #         print("check prediction: ", pred)
-            #         predictions.append(pred)
-
-                
-            #     # for input_, output in zip(batch[0], outputs):
-            #     #     pred = dev_data.decode(output)
-            #     #     print("check prediction: ", pred)
-            #     #     predictions.append(pred)
-            # else:
-            #     indexed_preds = dict(decode_pool.starmap(
-            #         parallel_decode, zip(outputs, [dev_data]*bs , range(bs), question_ids)))
-
-            #     for index in indexed_preds:
-            #         q_id, pred = indexed_preds[index]
-            #         print("check prediction: ", pred)
-            #         prediction_dict[q_id].append(pred)
-            # decode_pool.close()
-            # decode_pool.join()
-
-
-                # for input_, output, q_id in zip(input_ids, outputs, question_ids):
-                #     pred = dev_data.decode(output)
-                #     print(f"check prediction for question {q_id}: ", pred)
-                #     prediction_dict[q_id].append(pred)
-                #     # predictions.append(pred) # no longer used
-
 
 
         # second generation
@@ -638,6 +602,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 # new_input_ids = 
                 indices = []
                 qp_check_d = defaultdict(lambda :False)
+
                 for i, (input_, q_id) in enumerate(zip(input_ids, question_ids)):
                     if len(prediction_dict[q_id]) == 0 and not qp_check_d[q_id]:
                         indices.append(i)
@@ -646,9 +611,10 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 if len(indices) == 0:
                     continue
                 
-                
-                new_input_ids = input_ids[indices, :]
-                new_attention_mask = attention_mask[indices, :]
+                # import pdb; pdb.set_trace()
+                new_input_ids = input_ids[indices, :].to(device)
+                new_attention_mask = attention_mask[indices, :].to(device)
+                model = model.to(device)
                 new_question_ids = []
                 for idx in indices:
                     new_question_ids.append(question_ids[idx])
@@ -657,12 +623,13 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
                 # disallow generate empty strings will prevent 
                 # check if empty string id and sep token id is the same
+
                 new_outputs = model.generate(input_ids=new_input_ids,
                                          attention_mask=new_attention_mask,
                                          num_beams=dev_data.args.num_beams,
                                          max_length=dev_data.args.max_output_length,
                                          early_stopping=True,
-                                        bad_words_ids = [[2,0,0,0]]
+                                        bad_words_ids = [[2,0,0,1437, 2], [2,0,0,0]]
                                          )  # min_len =4  is about two words
                 print(new_outputs)
                 # filtered input ids

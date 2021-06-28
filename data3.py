@@ -490,7 +490,7 @@ class QAData(object):
                                 num_clusters = clustering_results["num_clusters"]
                                 num_passages = clustering_results["num_passages"]
                                 num_questions = clustering_results["num_questions"]
-                                questions_n_passages = clustering_results["questions_n_passages"]
+                                qp = clustering_results["questions_n_passages"]
                             self.logger.info(
                                     f"Average number of clusters is (better be around 2): {num_clusters/num_questions}")
                             self.logger.info(
@@ -1001,21 +1001,19 @@ class topKPassasages():
             i)
         kmeans_1 = KMeans(n_clusters=self.k_cluster,
                           random_state=0).fit(passage_embeddings)
-        # from IPython import embed; embed()
-
+        print("check clustering results")
 
         # compute stat of clusters
         cluster_pts_count = dict()
-        for j in range(10):
+        for j in range(self.k_cluster):
             cluster_pts_count[j] = sum(
                 kmeans_1.labels_ == j)
-        # for j in range(10):
-        #     print(j, ": ", sum(kmeans_1.labels_ == j))
+
         cluster_ranks = dict()
         
 
         # add up ranks
-        for j in range(0, len(kmeans_1.labels_)):
+        for j in range(len(kmeans_1.labels_)): # count up to the number of points 
             cluster_label = kmeans_1.labels_[j]
             # TODO: defaultdict
             if cluster_label in cluster_ranks.keys():

@@ -92,13 +92,14 @@ def eval(predictions, data, eval_fn, normaliza_fn,
 
 
 
-def is_answer_set_in_passsages(answer_md, p_str, answers):
+def is_answer_set_in_passsages(answer_md, p_str, answers, remove_answer = False):
     """check if a passage contain any answer in the answer set
 
     Args:
         answer_md ([type]): [description]
         p_str ([type]): [description]
         answers ([type]): [description]
+        remove_answer (bool): remove answer from matadata so as to 
 
     Returns:
         [type]: [description]
@@ -108,8 +109,15 @@ def is_answer_set_in_passsages(answer_md, p_str, answers):
             answer_for_qa_pair = answers[start:end]
             for cur_a_str in answer_for_qa_pair:
                 if is_answer_in_passages(cur_a_str, p_str):
-                    return True
-    return False
+                    if remove_answer:
+                        answer_md.remove(cur_md_for_qa_pair)
+                        return True, answer_md
+                    else:
+                        return True
+    if remove_answer:
+        return False, answer_md
+    else:
+        return False
 
 
 
@@ -237,6 +245,16 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                 logging_prefix + "Concatenating clustering results...")
             assert len(question_ids) == len(
                 metadata), (len(question_ids), len(metadata))
+            # check answer distribution across top PCs, expecting most answers are in top clusters
+            # by "exclusive", after we found one answer, we eliminate it. In this way, we can check the answer coverage by PC, and know how many clusters are necessary
+            exclusive_answer_distribution_d = defaultdict(lambda :0)
+
+            # check answer distribution without eliminating 
+            answer_distribution_d = defaultdict(lambda: 0)
+
+            # top PC number of different titles. Expecting number of titles are less in the top PC.
+            # on average the numer of title in each PC. expect less title in top clusters (high rank, more accurate)
+            title_distribution_d = defaultdict(lambda: 0)
             for (i, cur_md) in enumerate(metadata):
                 clusters_passages, num_cluster_for_question_i, num_passages_for_question_i = passages.get_clustered_passages(
                     i, rank_threshold)  # 2-d list
@@ -294,12 +312,32 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                             neg_cluster_qp_concatenation)
                 else:
                     questions_with_clustered_passages.append([])
-                    for p_cluster in clusters_passages:  # it's ordered
+                    qp_l = questions_with_clustered_passages[-1]
+                     
+                    import copy
+                    
+                    updated_md = copy.deepcopy(cur_md)
+                    for (i, p_cluster) in enumerate(clusters_passages):  # it's ordered
                         # reset qp concatenation
                         cluster_qp_concatenation = questions[i]
                         cluster_qp_concatenation += " </s>  <s>"
+                        title_distribution_d[i] += len(set([p["title"] for p in p_cluster]))
                         start = True
                         for p in p_cluster:
+
+                            # updated md
+                            found_answer, updated_md = is_answer_set_in_passsages(
+                                updated_md, p["text"], answers,True)
+                            if found_answer:
+                                exclusive_answer_distribution_d[i] += 1
+                            
+                            found_answer = is_answer_set_in_passsages(
+                                cur_md, p["text"], answers)
+                            if found_answer:
+                                answer_distribution_d[i] += 1
+
+                            
+                                
                             # format: [CLS] question [SEP] title 1 [SEP] passages
                             if start:
                                 cluster_qp_concatenation += p["title"] + \
@@ -312,8 +350,14 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                                     p["text"]
                             start = False
                         cluster_qp_concatenation += " </s> "
-                        questions_with_clustered_passages[i].append(
+                        qp_l.append(
                             cluster_qp_concatenation)
+            for i in range(num_clusters):
+                title_distribution_d[i] /= len(metadata)
+
+            import pdb; pdb.set_trace()
+            print(
+                "check title_distribution_d and answer_distribution_d and questions_with_clustered_passages")
             num_questions = len(questions)
             clustering_results = dict()
             clustering_results["num_clusters"] = num_clusters
@@ -445,9 +489,8 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                     # do not add emtpy answer if it's contrastive learning
                     if len(found_answers_for_one_qp) == 0 and is_training and not args.is_contrastive:
                         num_eliminated_qp += 1  # not actually eliminated because
-                        empty_answer_gen_ratio = 0.1
+                        empty_answer_gen_ratio = 0.3
                         if np.random.rand() < empty_answer_gen_ratio: # randomly eliminate qp for empty answer
-                            
                             found_answer_for_qa_pair.append(
                                 empty_answer_str)
                             found_answers_for_one_qp.append(
@@ -470,7 +513,6 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
 
                         question_start_idx = len(new_questions)
                         new_questions.append(cur_qp_str)
-                        import pdb; pdb.set_trace()
                         question_end_idx = len(new_questions)
 
                         question_metadata.append(
