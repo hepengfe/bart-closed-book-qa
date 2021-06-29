@@ -15,7 +15,7 @@ from bart import MyBart
 from T5 import MyT5
 from tqdm import tqdm
 from span_utils import normalize_answer
-
+from collections import defaultdict
 
 def generic_generate(model, device, input_ids, attention_mask, num_beams, max_output_length):
     """ A function help preprocess generate input devices and postprocess dictionary outputs. 
@@ -69,8 +69,6 @@ def parallel_eval(eval_fn, partial_preds, partial_data):
 
 
 def run(args, logger):
-
-    
     # load tokenizer
     if args.predict_type.lower() == "spanseqgen":
         if args.model.lower() == "bart":
@@ -427,9 +425,6 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
             # eval
             if global_step % args.eval_period == 0:
                 model.eval()
-                import pdb; pdb.set_trace()
-                print("check what causes memory leaking")
-                
                 logger.info(f"Start evaluating at global step {global_step}")
                 model = get_model(model, args.device).to("cpu")
                 del batch
@@ -438,8 +433,7 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                 # 2. gradients info during training
                 assert args.gradient_accumulation_steps == 1, "it's safe to empty cache only when gradient_accumulation_steps is one"
                 torch.cuda.empty_cache()  
-                # curr_em = inference(args, get_model(model, args.device), dev_data,
-                #                     args.predict_type, device=args.device, is_ambig=get_model(model, args.device).is_ambig, save_predictions=True)
+                
                 curr_em = inference(args, model, dev_data,
                                     args.predict_type, device=args.device, is_ambig=model.is_ambig, save_predictions=True)
                 logger.info("Step %d Train loss %.2f %s %.2f%% on epoch=%d" % (
@@ -471,7 +465,6 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
                         break
                 model = torch.nn.DataParallel(model)
                 model = model.to(torch.device(args.device))
-
                 model.train()
             epoch_losses[epoch] = str(np.mean(train_losses))
         with open(os.path.join(args.output_dir, f"{args.model}_bs{args.train_batch_size}.json"), "w") as fp:
@@ -485,13 +478,13 @@ def get_model(model, device):
 def post_process_dict_outputs(outputs, device):
     """ Get sequences and scores from dictionary output by generate function, and clean cuda memory
 
-                Args:
-                    outputs ([type]): [description]
-                    device ([type]): [description]
+    Args:
+        outputs ([type]): [description]
+        device ([type]): [description]
 
-                Returns:
-                    [type]: [description]
-                """
+    Returns:
+        [type]: [description]
+    """
     sequences_scores = outputs.sequences_scores.to(device)
     sequences = outputs.sequences.to(device)
     del outputs
@@ -501,34 +494,33 @@ def post_process_dict_outputs(outputs, device):
 def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = False, save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
-    # import pdb; pdb.set_trace()
-    # print("check dev data question ids")
     if predict_type.lower() == "spanseqgen":
-        from collections import defaultdict
-        # {question_idx : [pred_str1, pred_str2]}
         prediction_dict = defaultdict(lambda :[])  # key: q_id   value: [ (pred, pred_score) ]
-
+        model = model.to("cpu") # it will be moved to corresponding cuda devices later
+        torch.cuda.empty_cache()
         if args.n_gpu > 1:
             model_on_devices = [copy.deepcopy(model).to(i) for i in range(args.n_gpu)]
-        
+        if args.pdb_debug:
+            break_i = 5 
+            print("set break_i = 5 to reduce the number of iterations")
+        # generate and encode outputs
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-            
+            if args.pdb_debug:
+                if i == break_i:
+                    break
             
             bs = len(batch[0])
-            # assert bs % args.n_gpu == 0, "must be dividable?"
-
-
             # move model to device 0 and device 1
             # move input_ids, attention mask to device 0 and device 1
             # concatenate outputs
             input_ids = batch[0]
             attention_mask = batch[1]
             question_ids = batch[2]
+            decoder_input_ids = batch[3]
 
-            
+            # generate outputs
             if args.n_gpu > 1:
                 pool = mp.Pool(30)
-
                 devices = list(range(args.n_gpu))
                 bs_per_device = bs // args.n_gpu    
 
@@ -562,15 +554,14 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 pool.join()
 
             else:
-                input_ids = input_ids.to(device)
-                attention_mask = attention_mask.to(device)
-
+                model = model.to(device)
                 _, (outputs,  normed_probs) = generic_generate(model, device, input_ids,
                                  attention_mask, dev_data.args.num_beams, dev_data.args.max_output_length)
 
-    
             assert len(outputs) == len(question_ids) == len(
                 attention_mask), (len(outputs), len(question_ids), len(attention_mask))
+
+            # encode outputs
             if not args.passage_clustering:
                 preds = dev_data.batch_decode(outputs)
                 for (i, pred) in enumerate(preds):
@@ -578,17 +569,19 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 predictions.extend(preds)
             else:
                 preds = dev_data.batch_decode(outputs)
+                answers = dev_data.batch_decode(decoder_input_ids)
+                import pdb; pdb.set_trace()
+                assert len(preds) == len(answers), (len(preds), len(answers))
                 for (idx, q_id) in enumerate(question_ids):
                     try:
                         print(f"check prediction(pred_score) {q_id} ({normed_probs[idx]}): ",
-                              preds[idx])
-                        
+                              preds[idx], " answer: ", answers[idx])
                         prediction_dict[q_id].append(
-                            (preds[idx], normed_probs[idx]))
+                            (preds[idx], normed_probs[idx], answers[idx]))
                     except IndexError:
                         import pdb; pdb.set_trace()
 
-        # NOTE: haven't implemented normed_prob here, also the thought of second gen is kinda abandoned
+        # NOTE: haven't implemented normed_probs here, also the thought of second gen is kinda abandoned
         if args.second_generation:
             # second generation
             if args.passage_clustering and not args.is_contrastive:
@@ -600,14 +593,11 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
                 # iterate all data again
                 for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-                    # if i == 20:
-                    #     break
                     input_ids = batch[0]
                     attention_mask = batch[1]
                     question_ids = batch[2]
                     input_ids = input_ids.to(device)
                     attention_mask = attention_mask.to(device)
-                    # new_input_ids = 
                     indices = []
                     qp_check_d = defaultdict(lambda :False)
 
@@ -639,7 +629,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                                             early_stopping=True,
                                             bad_words_ids = [[2,0,0,1437, 2], [2,0,0,0]]
                                             )  # min_len =4  is about two words
-                    print(new_outputs)
+
                     # filtered input ids
                     for input_, output, q_id in zip(new_input_ids, new_outputs, new_question_ids):
                         pred = dev_data.decode(output)
@@ -651,23 +641,29 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
         # PC eval: after all predictions
         if args.passage_clustering:
-            import pdb; pdb.set_trace()
+            
             print('check length of prediction dict keys')
-            # concatenate all answers in the same question
+            all_pred_scores = []
+            # concatenate all answers for one question
             for i in prediction_dict.keys():  
-                preds, pred_scores = prediction_dict[i]  # predictions for one question
+                preds_w_scores =  prediction_dict[i] 
+                preds = [pws[0] for pws in preds_w_scores]
+                pred_scores = [pws[1] for pws in preds_w_scores]
+                answers = [pws[2] for pws in preds_w_scores]
+                all_pred_scores.extend(pred_scores)
                 preds = [normalize_answer(p) for p in preds if len(p) != 0]
                 assert len(preds) == len(pred_scores), "length limit might eliminate some predictions, pls check"
                 pred_acc_score_d = defaultdict(lambda :0) # key: pred  value: pred_score
-                # 1. agg same answer's probs
+                # 1. aggregate same answer's probs
                 for (p, ps) in zip(preds, pred_scores):
                     pred_acc_score_d[p] += ps
                 # 2. set a threshold to filter answers
-                import pdb; pdb.set_trace()
-                print("check the reasonable pred score threshold and keep answer scheme")
-                threshold = 0
+                if args.pdb_debug:
+                    import pdb; pdb.set_trace()
+                    print("check confidence score and gold answers")
+                threshold = 0.7
                 preds = [p for p in preds if pred_acc_score_d[p] > threshold]
-                # 3. but keep at least one answer
+                # 3. but keep at least one answer for one question if all answers are below the threshold
                 if len(preds) == 0:
                     preds = [sorted(pred_acc_score_d.items(), key = lambda item:item[1], reverse=True)[0][0]  ] # sort in a decreasing order + index on the first key
 
@@ -677,13 +673,11 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 prediction_dict[i] = (preds, pred_score)
 
             predictions = prediction_dict  # rename for convenince
-
+        avg_pred_score = sum(all_pred_scores)/len(all_pred_scores)
+        import pdb; pdb.set_trace()
+        print("check pred scores ")
         print("check predict dict")
 
-                
-            # outputs = model.generate(input_ids=batch[0] )
-            # Q: span efxtraction: what it generates?
-            # overwrite bert generate function
 
 
         # another mothod is decode after all outputs
@@ -694,7 +688,6 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
     elif predict_type.lower() == "spanextraction":
         all_start_logits = []
-
         all_end_logits = []
         all_input_data = []
 

@@ -535,15 +535,10 @@ class QAData(object):
                                                                verbose=self.args.verbose)
                     dump_pickle(question_input, question_metadata, self.question_ids, answer_input, answer_metadata, joined_answers_l, encoded_input_path,
                                 )
-                    import pdb; pdb.set_trace()
                     input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
                     decoder_input_ids, decoder_attention_mask = answer_input[
                         "input_ids"], answer_input["attention_mask"]
-                    # if not self.is_training:
-                    #     decoder_input_ids=  None
-                    #     decoder_attention_mask = None
-                    #     metadata = None
-                    # num_truncated_tokens = 0
+
                     num_truncated_tokens = abs(sum(
                         question_input['num_truncated_tokens']))     
                     num_quesiton_ids = sum(
@@ -736,28 +731,6 @@ class QAData(object):
             return ems
 
 
-            # if self.answer_type == "seq":
-            #     for (prediction, dp) in zip(predictions, self.data):
-            #         # there are many concatenation of answers and they are all correct
-            #         # we append the one with the highest score
-                    
-            #         results = ems.append(get_exact_match(prediction, dp["answer"]))
-            # else:
-            #     for (prediction, dp) in zip(predictions, self.data):
-            #         for pred in prediction:
-            #             ems.append(get_exact_match(pred, dp["answer"]))
-            # return ems
-
-
-
-
-
-        # def get_exact_match(prediction, groundtruth):
-        # if type(groundtruth)==list:
-        #     if len(groundtruth)==0:
-        #         return 0
-        #     return np.max([get_exact_match(prediction, gt) for gt in groundtruth])
-        # return (normalize_answer(prediction) == normalize_answer(groundtruth)
 
     def save_predictions(self, predictions):
         assert len(predictions) == len(self), (len(predictions), len(self))
@@ -863,30 +836,13 @@ class QAGenDataset(Dataset):
     def __getitem__(self, idx):
         if not self.is_training:
             assert len(self.input_ids) == len(
-                self.attention_mask) == len(self.question_ids), ( len(self.input_ids), len(
+                self.attention_mask) == len(self.question_ids) , ( len(self.input_ids), len(
                     self.attention_mask), len(self.question_ids))
-            # if self.passage_clustering:
-            #     indices = self.in_metadata[idx]
-            #     # import pdb; pdb.set_trace()
-            #     # print("expect idx to be a range of indices of correct answers")
-            #     # return a list of QP and attention mask
-            #     input_ids_list = [self.input_ids[idx] for idx in range(*indices)]
-            #     attention_mask = [self.attention_mask[idx]
-            #                       for idx in range(*indices)]
-            #     assert type(
-            #         input_ids_list) == list, "input_ids_list should be 2 d: " + str(input_ids_list)
-            #     # normalized_indices = 
-            #     return input_ids_list, attention_mask, indices
 
-            #     # return the similar data as the last 
-            # else:
-            #     idx = self.in_metadata[idx][0]
-            #     return self.input_ids[idx], self.attention_mask[idx]
             idx = self.in_metadata[idx][0]
-            try:
-                return self.input_ids[idx], self.attention_mask[idx], self.question_ids[idx]
-            except IndexError:
-                import pdb; pdb.set_trace()
+            out_idx = self.out_metadata[idx][0] # not exhaustive but serves as a reference
+            return self.input_ids[idx], self.attention_mask[idx], self.question_ids[idx], self.decoder_input_ids[out_idx]
+
 
         in_idx = np.random.choice(range(*self.in_metadata[idx]))
         out_idx = np.random.choice(range(*self.out_metadata[idx]))
