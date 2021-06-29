@@ -4,6 +4,8 @@ from span_predictor import BertSpanPredictor, ElectraSpanPredictor
 import numpy as np
 import torch
 import json
+import copy
+import multiprocessing as mp
 
 from transformers import BartTokenizer, BartConfig, T5Tokenizer, T5Config, BertConfig, BertTokenizer , ElectraConfig,  ElectraTokenizer,  ElectraForQuestionAnswering
 from transformers import AdamW, get_linear_schedule_with_warmup
@@ -15,7 +17,21 @@ from tqdm import tqdm
 from span_utils import normalize_answer
 
 
-def parallel_generate(model, device, input_ids, attention_mask, num_beams, max_output_length):
+def generic_generate(model, device, input_ids, attention_mask, num_beams, max_output_length):
+    """ A function help preprocess generate input devices and postprocess dictionary outputs. 
+    It helps reducing GPU memory usage and supports multiprocessing parallel.
+
+    Args:
+        model ([type]): LM that has been moved to device. 
+        device ([type]): device for input_ids and attention_mask
+        input_ids ([type]): generate arg 
+        attention_mask ([type]): generate arg 
+        num_beams ([type]): generate arg
+        max_output_length ([type]): generate arg
+
+    Returns:
+        [tuple]: (key:device, value: (outputs list, normalized probabilities list) )
+    """
     input_ids = input_ids.to(device)
     attention_mask = attention_mask.to(device)
 
@@ -24,9 +40,22 @@ def parallel_generate(model, device, input_ids, attention_mask, num_beams, max_o
                             num_beams=num_beams,
                             max_length=max_output_length,
                             early_stopping=True,
-                            use_cache=True
+                            use_cache=True,
+                            return_dict_in_generate=True,
+                            output_scores=True
                             )
-    return (device, outputs.to("cpu"))  # transfer output to device cpu, also might save some GPU memory
+    # transfer output to device cpu, also might save some GPU memory
+    outputs, sequences_scores = post_process_dict_outputs(outputs, "cpu")
+    normed_probs = None 
+    normed_probs = []
+    for i in range(outputs.shape[0]):
+        # it's size of bs  (selects the beam with the highest score)
+        log_scores = sequences_scores
+        normed_prob = (torch.exp(log_scores[i]) / 
+                                torch.exp(log_scores).sum()).item()
+        normed_probs.append(normed_prob)
+    # NOTE: as of now, sequence scores is not used. We might need to use hidden states later though
+    return (device, (outputs.tolist(), normed_probs))
 
 
 def parallel_decode(output, dev_data, index, q_id=None):
@@ -453,6 +482,22 @@ def train(args, logger, model, train_data, dev_data, optimizer, scheduler):
 def get_model(model, device):
     return model.module if device=="cuda" else model
 
+def post_process_dict_outputs(outputs, device):
+    """ Get sequences and scores from dictionary output by generate function, and clean cuda memory
+
+                Args:
+                    outputs ([type]): [description]
+                    device ([type]): [description]
+
+                Returns:
+                    [type]: [description]
+                """
+    sequences_scores = outputs.sequences_scores.to(device)
+    sequences = outputs.sequences.to(device)
+    del outputs
+    torch.cuda.empty_cache()
+    return sequences, sequences_scores
+
 def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = False, save_predictions=False):
     predictions = []
     bos_token_id = dev_data.tokenizer.bos_token_id
@@ -463,38 +508,9 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
         # {question_idx : [pred_str1, pred_str2]}
         prediction_dict = defaultdict(lambda :[])  # key: q_id   value: [ (pred, pred_score) ]
 
-
-            # start_time = time.perf_counter()
-            # outputs = model.generate(input_ids=input_ids,
-            #                          attention_mask=attention_mask,
-            #                          num_beams=dev_data.args.num_beams,
-            #                          max_length=dev_data.args.max_output_length,
-            #                          early_stopping=True,
-            #                          use_cache = True
-            #                          )
-            # end_time = time.perf_counter()
-            # print(f"Start Time : {start_time}")
-            # print(f"End Time : {end_time}")
-            # print(f"Execution Time : {end_time - start_time:0.6f}")
-
-            # start_time = time.perf_counter()
-            # outputs = model.generate(input_ids=input_ids,
-            #                 attention_mask=attention_mask,
-            #                 num_beams=dev_data.args.num_beams,
-            #                 max_length=dev_data.args.max_output_length,
-            #                 early_stopping=True,
-            #                 )
-            # end_time = time.perf_counter()
-            # print(f"Start Time : {start_time}")
-            # print(f"End Time : {end_time}")
-            # print(f"Execution Time : {end_time - start_time:0.6f}"
-        import copy
         if args.n_gpu > 1:
             model_on_devices = [copy.deepcopy(model).to(i) for i in range(args.n_gpu)]
-            # model_on_devices = [copy.deepcopy(model).to(0), model.to(1)]
-            # print([model.device for model in model_on_devices])
-            # exit()
-        import multiprocessing as mp
+        
         for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
             
             
@@ -505,29 +521,18 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
             # move model to device 0 and device 1
             # move input_ids, attention mask to device 0 and device 1
             # concatenate outputs
-            # import pdb;pdb.set_trace()
-         
             input_ids = batch[0]
             attention_mask = batch[1]
             question_ids = batch[2]
 
             
             if args.n_gpu > 1:
-                
-                # mp.set_start_method('spawn', force= True)
-                # try:
-                #     mp.set_start_method('spawn')
-                # except RuntimeError:
-                #     pass
                 pool = mp.Pool(30)
 
                 devices = list(range(args.n_gpu))
                 bs_per_device = bs // args.n_gpu    
-                # splitted_input_ids = [input_ids[i*bs_per_device: min((i+1)*bs_per_device, bs)]
-                #                       for i in range(args.n_gpu)]
 
-                # splitted_attention_mask = [
-                #     attention_mask[i*bs_per_device: (i+1)*bs_per_device] for i in range(args.n_gpu)]
+                # pre-process parallel fn input
                 splitted_input_ids = []
                 splitted_attention_mask = []
                 for i in range(args.n_gpu):
@@ -545,56 +550,41 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 parallel_gen_input = zip(model_on_devices, devices, splitted_input_ids, splitted_attention_mask,
                                 [dev_data.args.num_beams]*args.n_gpu, [dev_data.args.max_output_length]*args.n_gpu)
                 indexed_outputs = dict(pool.starmap(
-                    parallel_generate, parallel_gen_input))
+                    generic_generate, parallel_gen_input))
                 outputs = []
+                normed_probs = []
                 for i in range(args.n_gpu):
-                    outputs.extend(indexed_outputs[i].tolist()) # tensor to list 
+                    outputs.extend(indexed_outputs[i][0]) 
+                    normed_probs.extend(indexed_outputs[i][1])
+
 
                 pool.close()
                 pool.join()
 
             else:
-                pred_score_d = {}
                 input_ids = input_ids.to(device)
                 attention_mask = attention_mask.to(device)
-                outputs = model.generate(input_ids=input_ids,
-                                        attention_mask=attention_mask,
-                                        num_beams=dev_data.args.num_beams,
-                                        max_length=dev_data.args.max_output_length,
-                                        early_stopping=True,
-                                        use_cache = True,
-                                        return_dict_in_generate = True,
-                                        output_scores = True
-                                        )
-                for i in range(outputs.sequences.shape[0]):
-                    log_scores = outputs.sequences_scores  # it's size of bs  (selects the beam with the highest score)
-                    normed_prob = (torch.exp(log_scores[i]) / 
-                                            torch.exp(log_scores).sum()).item()
 
+                _, (outputs,  normed_probs) = generic_generate(model, device, input_ids,
+                                 attention_mask, dev_data.args.num_beams, dev_data.args.max_output_length)
 
-
-
-
-
-                import pdb; pdb.set_trace()
-
-            assert len(outputs.sequences) == len(question_ids) == len(
-                attention_mask), (len(outputs.sequences), len(question_ids), len(attention_mask))
+    
+            assert len(outputs) == len(question_ids) == len(
+                attention_mask), (len(outputs), len(question_ids), len(attention_mask))
             if not args.passage_clustering:
-                preds = dev_data.batch_decode(outputs.sequences)
+                preds = dev_data.batch_decode(outputs)
                 for (i, pred) in enumerate(preds):
                     print("check prediction: ", pred)
                 predictions.extend(preds)
             else:
-                preds = dev_data.batch_decode(outputs.sequences)
+                preds = dev_data.batch_decode(outputs)
                 for (idx, q_id) in enumerate(question_ids):
                     try:
-                        print(f"check prediction {q_id}: ",
-                              preds[idx], normed_prob[i])
+                        print(f"check prediction(pred_score) {q_id} ({normed_probs[idx]}): ",
+                              preds[idx])
                         
-                        prediction_dict[q_id].append((preds[idx], normed_prob[i]) )
-
-
+                        prediction_dict[q_id].append(
+                            (preds[idx], normed_probs[idx]))
                     except IndexError:
                         import pdb; pdb.set_trace()
 
@@ -661,7 +651,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
 
         # PC eval: after all predictions
         if args.passage_clustering:
-           
+            import pdb; pdb.set_trace()
             print('check length of prediction dict keys')
             # concatenate all answers in the same question
             for i in prediction_dict.keys():  

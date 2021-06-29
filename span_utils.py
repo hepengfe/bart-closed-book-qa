@@ -31,7 +31,24 @@ def some_generic_load_pickle(d, path):
 
 def eval(predictions, data, eval_fn, normaliza_fn,
                   dataset_name, answer_type) -> list:
+    """ A generic evaluation function to evaluation predictions and data labels based on the provided evaluation function
+
+    Args:
+        predictions (list): it could be a list of predictions or a list of (prediction, prediction_score). It's checked and marked by is_pred_with_score
+        data ([type]): [description]
+        eval_fn ([type]): [description]
+        normaliza_fn ([type]): [description]
+        dataset_name ([type]): [description]
+        answer_type ([type]): [description]
+
+    Returns:
+        list: [description]
+    """
     eval_scores = []
+
+    is_pred_with_score = False
+    if type(predictions[0]) == tuple:
+        is_pred_with_score = True
     for (prediction, dp) in zip(predictions, data):
         if dataset_name == "ambig":
             if answer_type == "seq":
@@ -42,6 +59,8 @@ def eval(predictions, data, eval_fn, normaliza_fn,
                     question_idx = prediction
                     prediction = predictions[question_idx]
                 cur_answers = dp["answers"]
+                if is_pred_with_score:
+                    prediction, score = prediction
 
                 # f1 without duplication
                 prediction = prediction.replace(
@@ -53,9 +72,10 @@ def eval(predictions, data, eval_fn, normaliza_fn,
 
                 max_f1 = np.max([eval_fn(list(set(cur_answer)), list(set(prediction)))
                                     for cur_answer in cur_answers])
-
-                print(
-                    f"f1: {max_f1}  prediction: {prediction} cur_answer: {cur_answers[:10]}")
+                if is_pred_with_score:
+                    print(f"f1: {max_f1}  prediction: {prediction} pred_score: {score} cur_answer: {cur_answers[:10]}")
+                else:
+                    print(f"f1: {max_f1}  prediction: {prediction} cur_answer: {cur_answers[:10]}")
                 # NOTE: the only difference from span answer type
                 eval_scores.append(max_f1)
 

@@ -660,7 +660,7 @@ class QAData(object):
         """Evaluate exact matches
 
         Args:
-            predictions ([type]): [description]
+            predictions ([type]): dictionary (key: q_id, value: a list of predictions w/o pred scores)
 
         Returns:
             [type]: [description]
@@ -682,12 +682,16 @@ class QAData(object):
             eval_pool = mp.Pool(num_eval_processes)
             if type(predictions) == defaultdict:
                 question_indices = [key for key in predictions.keys()]
-                if type(predictions[question_indices[0]]) == tuple:
-                    predictions = [predictions[q_idx][0]
-                                   for q_idx in question_indices]
 
+                # get predictions for w or w/o pred scores
+                # if type(predictions[question_indices[0]]) == tuple:
+                #     predictions = [predictions[q_idx][0]
+                #                    for q_idx in question_indices]
+                # else:
+
+                # predictions was dictionary 
                 predictions = [predictions[q_idx]
-                               for q_idx in question_indices]
+                                for q_idx in question_indices]
               
             num_entries_per_process = len(predictions) // num_eval_processes
             preds_split = []
@@ -728,8 +732,7 @@ class QAData(object):
             if self.dataset_name == "ambig":
                 ems = eval(predictions, self.data, get_f1, normalize_answer, self.dataset_name, self.answer_type)
             elif self.dataset_name == "nq":
-                ems = eval(predictions, self.data, get_f1, normalize_answer,
-                     self.dataset_name, self.answer_type)
+                ems = eval(predictions, self.data, get_f1, normalize_answer, self.dataset_name, self.answer_type)
             return ems
 
 
