@@ -319,7 +319,6 @@ class QAData(object):
                 #     metadata, passage_coverage_rate = json.load(f)
                 question_input, question_metadata, question_ids, answer_input, answer_metadata, joined_answers_l = load_pickle(
                     encoded_input_path)# , encoded_answer_path, metadata_path)
-
                 self.question_ids = question_ids
                 # import pdb; pdb.set_trace()
 
@@ -435,7 +434,6 @@ class QAData(object):
                     answers = [answer.lower() for answer in answers]
 
                 # answers has been flattened, so it's normal to have more answers than questions
-
                 self.logger.info(self.logging_prefix +
                                  "Start concatenating question and passages ")
 
@@ -518,6 +516,7 @@ class QAData(object):
                             
                     self.logger.info(
                         self.logging_prefix + f"Start encoding questions ({len(questions)}), qp ({len(qp)}) and answers, this might take a while")
+
                     question_input = tokenizer.batch_encode_plus(qp,
                                                                  pad_to_max_length=True,
                                                                  max_length=self.args.max_input_length,
@@ -536,7 +535,7 @@ class QAData(object):
                                                                verbose=self.args.verbose)
                     dump_pickle(question_input, question_metadata, self.question_ids, answer_input, answer_metadata, joined_answers_l, encoded_input_path,
                                 )
-
+                    import pdb; pdb.set_trace()
                     input_ids, attention_mask = question_input["input_ids"], question_input["attention_mask"]
                     decoder_input_ids, decoder_attention_mask = answer_input[
                         "input_ids"], answer_input["attention_mask"]
@@ -544,6 +543,7 @@ class QAData(object):
                     #     decoder_input_ids=  None
                     #     decoder_attention_mask = None
                     #     metadata = None
+                    # num_truncated_tokens = 0
                     num_truncated_tokens = abs(sum(
                         question_input['num_truncated_tokens']))     
                     num_quesiton_ids = sum(
@@ -682,6 +682,10 @@ class QAData(object):
             eval_pool = mp.Pool(num_eval_processes)
             if type(predictions) == defaultdict:
                 question_indices = [key for key in predictions.keys()]
+                if type(predictions[question_indices[0]]) == tuple:
+                    predictions = [predictions[q_idx][0]
+                                   for q_idx in question_indices]
+
                 predictions = [predictions[q_idx]
                                for q_idx in question_indices]
               
@@ -703,8 +707,6 @@ class QAData(object):
                     self.data[i *
                             num_entries_per_process:(i+1)*num_entries_per_process]
                 )
-            # import pdb
-            # pdb.set_trace()
             if self.dataset_name == "ambig":
                 f1s = eval_pool.starmap(eval, zip(preds_split, data_split, [get_f1]*num_eval_processes, [
                     normalize_answer]*num_eval_processes,
@@ -1001,8 +1003,6 @@ class topKPassasages():
             i)
         kmeans_1 = KMeans(n_clusters=self.k_cluster,
                           random_state=0).fit(passage_embeddings)
-        print("check clustering results")
-
         # compute stat of clusters
         cluster_pts_count = dict()
         for j in range(self.k_cluster):

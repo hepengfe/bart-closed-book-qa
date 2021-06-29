@@ -107,6 +107,7 @@ def main():
                         help="Can be set to cpu or cuda or device number")
     parser.add_argument('--n_gpu', type=int, default=0)
     parser.add_argument('--gradient_cp',  default=False, action="store_true")
+    parser.add_argument('--check', default=False, action="store_true")
 
     # parameters for SpanSeqGen
     parser.add_argument("--top_k_passages", default=10, type=int)
@@ -121,6 +122,7 @@ def main():
 
     parser.add_argument("--eval_recall", default=False)
     parser.add_argument("--threshold", type=int, default=0.1)
+    parser.add_argument("--second_generation", type=bool, default=False)
 
 
     # passage clustering

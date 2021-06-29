@@ -352,12 +352,12 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                         cluster_qp_concatenation += " </s> "
                         qp_l.append(
                             cluster_qp_concatenation)
+
             for i in range(num_clusters):
                 title_distribution_d[i] /= len(metadata)
-
-            import pdb; pdb.set_trace()
-            print(
-                "check title_distribution_d and answer_distribution_d and questions_with_clustered_passages")
+            if args.check:
+                import pdb; pdb.set_trace()
+            print("check title_distribution_d and answer_distribution_d and questions_with_clustered_passages")
             num_questions = len(questions)
             clustering_results = dict()
             clustering_results["num_clusters"] = num_clusters
@@ -404,6 +404,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
 
         num_eliminated_qp = 0
         answer_presence_d = defaultdict(lambda: 0)
+        # format QP and A
         for idx, (cur_qp, cur_md) in enumerate(zip(questions_n_passages, metadata)):
             
             found_answers_for_one_question = []
@@ -499,8 +500,8 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                             continue
 
                     aug_times += len(found_answers_for_one_qp)
-                    # aug_times += num_date
-                    # aug_times += num_long_answer
+                    aug_times += num_date
+                    aug_times += num_long_answer
                     # concatenate qp's answers
                     cur_answers = concatenate_answers(
                         found_answers_for_one_qp, sep_token)
@@ -556,8 +557,9 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                     concatenated_answers = [concatenated_answers[i]
                                             for i in rnd_indices]
                 cur_answers = concatenated_answers
-                import pdb
-                pdb.set_trace()
+
+
+                # add question indices and metadata
                 if args.is_contrastive:
                     # pos answer
                     answer_start_idx = len(new_answers)
@@ -636,13 +638,15 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                     # print("check first new_questions ")
                     question_end_idx = len(new_questions)
                     assert len(new_questions) == len(
-                        question_indices), "length shoudl be the same"
+                        question_indices), "length should be the same"
                     # TODO: find a way to save the question ids
 
                     question_metadata.append(
                         (question_start_idx, question_end_idx))
                     answer_metadata.append(
                         (answer_start_idx, answer_end_idx))
+        
+        import pdb; pdb.set_trace()
 
         if args.passage_clustering:
             import pdb

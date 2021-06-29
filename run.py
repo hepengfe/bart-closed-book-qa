@@ -12,6 +12,7 @@ from data3 import QAData
 from bart import MyBart 
 from T5 import MyT5
 from tqdm import tqdm
+from span_utils import normalize_answer
 
 
 def parallel_generate(model, device, input_ids, attention_mask, num_beams, max_output_length):
@@ -46,9 +47,8 @@ def run(args, logger):
         if args.model.lower() == "bart":
             tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
         elif args.model.lower() == "t5":
-            # tokenizer = T5Tokenizer.from_pretrained("t5-large")
             tokenizer = T5Tokenizer.from_pretrained("t5-base")
-
+            # tokenizer = T5TokenizerFast.from_pretrained("t5-base")
         else:
             print("wrong model argument")
             exit()
@@ -311,6 +311,7 @@ def run(args, logger):
         
         
         model.eval()
+        model = model.to(torch.device(args.device))
 
         ems = inference(args, model, dev_data, args.predict_type,
                         device=args.device, is_ambig = is_ambig, save_predictions=True)
@@ -460,7 +461,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
     if predict_type.lower() == "spanseqgen":
         from collections import defaultdict
         # {question_idx : [pred_str1, pred_str2]}
-        prediction_dict = defaultdict(lambda :[])
+        prediction_dict = defaultdict(lambda :[])  # key: q_id   value: [ (pred, pred_score) ]
 
 
             # start_time = time.perf_counter()
@@ -553,10 +554,9 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 pool.join()
 
             else:
-
+                pred_score_d = {}
                 input_ids = input_ids.to(device)
                 attention_mask = attention_mask.to(device)
-
                 outputs = model.generate(input_ids=input_ids,
                                         attention_mask=attention_mask,
                                         num_beams=dev_data.args.num_beams,
@@ -564,79 +564,97 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                                         early_stopping=True,
                                         use_cache = True,
                                         return_dict_in_generate = True,
-                                        ).tolist()
-            assert len(outputs) == len(question_ids) == len(
-                attention_mask), (len(outputs), len(question_ids), len(attention_mask))
+                                        output_scores = True
+                                        )
+                for i in range(outputs.sequences.shape[0]):
+                    log_scores = outputs.sequences_scores  # it's size of bs  (selects the beam with the highest score)
+                    normed_prob = (torch.exp(log_scores[i]) / 
+                                            torch.exp(log_scores).sum()).item()
+
+
+
+
+
+
+                import pdb; pdb.set_trace()
+
+            assert len(outputs.sequences) == len(question_ids) == len(
+                attention_mask), (len(outputs.sequences), len(question_ids), len(attention_mask))
             if not args.passage_clustering:
-                preds = dev_data.batch_decode(outputs)
-                for pred in preds:
+                preds = dev_data.batch_decode(outputs.sequences)
+                for (i, pred) in enumerate(preds):
                     print("check prediction: ", pred)
                 predictions.extend(preds)
             else:
-                preds = dev_data.batch_decode(outputs)
+                preds = dev_data.batch_decode(outputs.sequences)
                 for (idx, q_id) in enumerate(question_ids):
                     try:
-                        print(f"check prediction {q_id}: ", preds[idx])
-                        prediction_dict[q_id].append(preds[idx])
+                        print(f"check prediction {q_id}: ",
+                              preds[idx], normed_prob[i])
+                        
+                        prediction_dict[q_id].append((preds[idx], normed_prob[i]) )
+
+
                     except IndexError:
                         import pdb; pdb.set_trace()
 
+        # NOTE: haven't implemented normed_prob here, also the thought of second gen is kinda abandoned
+        if args.second_generation:
+            # second generation
+            if args.passage_clustering and not args.is_contrastive:
+                # remove empty string answers
+                for q_id in prediction_dict.keys():
+                    prediction_dict[q_id] = [
+                        a for a in prediction_dict[q_id] if len(a.strip()) != 0]
 
-        # second generation
-        if args.passage_clustering and not args.is_contrastive:
-            # remove empty string answers
-            for q_id in prediction_dict.keys():
-                prediction_dict[q_id] = [
-                    a for a in prediction_dict[q_id] if len(a.strip()) != 0]
 
+                # iterate all data again
+                for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
+                    # if i == 20:
+                    #     break
+                    input_ids = batch[0]
+                    attention_mask = batch[1]
+                    question_ids = batch[2]
+                    input_ids = input_ids.to(device)
+                    attention_mask = attention_mask.to(device)
+                    # new_input_ids = 
+                    indices = []
+                    qp_check_d = defaultdict(lambda :False)
 
-            # iterate all data again
-            for i, batch in tqdm(enumerate(dev_data.dataloader)) if args.verbose else enumerate(dev_data.dataloader):
-                # if i == 20:
-                #     break
-                input_ids = batch[0]
-                attention_mask = batch[1]
-                question_ids = batch[2]
-                input_ids = input_ids.to(device)
-                attention_mask = attention_mask.to(device)
-                # new_input_ids = 
-                indices = []
-                qp_check_d = defaultdict(lambda :False)
+                    for i, (input_, q_id) in enumerate(zip(input_ids, question_ids)):
+                        if len(prediction_dict[q_id]) == 0 and not qp_check_d[q_id]:
+                            indices.append(i)
+                            qp_check_d[q_id] = True
+                    indices = torch.LongTensor(indices)
+                    if len(indices) == 0:
+                        continue
+                    
+                    # import pdb; pdb.set_trace()
+                    new_input_ids = input_ids[indices, :].to(device)
+                    new_attention_mask = attention_mask[indices, :].to(device)
+                    model = model.to(device)
+                    new_question_ids = []
+                    for idx in indices:
+                        new_question_ids.append(question_ids[idx])
+                    new_question_ids = tuple(new_question_ids)
+                    
 
-                for i, (input_, q_id) in enumerate(zip(input_ids, question_ids)):
-                    if len(prediction_dict[q_id]) == 0 and not qp_check_d[q_id]:
-                        indices.append(i)
-                        qp_check_d[q_id] = True
-                indices = torch.LongTensor(indices)
-                if len(indices) == 0:
-                    continue
-                
-                # import pdb; pdb.set_trace()
-                new_input_ids = input_ids[indices, :].to(device)
-                new_attention_mask = attention_mask[indices, :].to(device)
-                model = model.to(device)
-                new_question_ids = []
-                for idx in indices:
-                    new_question_ids.append(question_ids[idx])
-                new_question_ids = tuple(new_question_ids)
-                 
+                    # disallow generate empty strings will prevent 
+                    # check if empty string id and sep token id is the same
 
-                # disallow generate empty strings will prevent 
-                # check if empty string id and sep token id is the same
-
-                new_outputs = model.generate(input_ids=new_input_ids,
-                                         attention_mask=new_attention_mask,
-                                         num_beams=dev_data.args.num_beams,
-                                         max_length=dev_data.args.max_output_length,
-                                         early_stopping=True,
-                                        bad_words_ids = [[2,0,0,1437, 2], [2,0,0,0]]
-                                         )  # min_len =4  is about two words
-                print(new_outputs)
-                # filtered input ids
-                for input_, output, q_id in zip(new_input_ids, new_outputs, new_question_ids):
-                    pred = dev_data.decode(output)
-                    print(f"check new prediction for question {q_id}: ", pred)
-                    prediction_dict[q_id].append(pred)
+                    new_outputs = model.generate(input_ids=new_input_ids,
+                                            attention_mask=new_attention_mask,
+                                            num_beams=dev_data.args.num_beams,
+                                            max_length=dev_data.args.max_output_length,
+                                            early_stopping=True,
+                                            bad_words_ids = [[2,0,0,1437, 2], [2,0,0,0]]
+                                            )  # min_len =4  is about two words
+                    print(new_outputs)
+                    # filtered input ids
+                    for input_, output, q_id in zip(new_input_ids, new_outputs, new_question_ids):
+                        pred = dev_data.decode(output)
+                        print(f"check new prediction for question {q_id}: ", pred)
+                        prediction_dict[q_id].append(pred)
                 
 
 
@@ -645,18 +663,31 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
         if args.passage_clustering:
            
             print('check length of prediction dict keys')
-            for i in prediction_dict.keys():
-                preds = prediction_dict[i]  # predictions for one question
-                preds = [p for p in preds if len(p) != 0]
+            # concatenate all answers in the same question
+            for i in prediction_dict.keys():  
+                preds, pred_scores = prediction_dict[i]  # predictions for one question
+                preds = [normalize_answer(p) for p in preds if len(p) != 0]
+                assert len(preds) == len(pred_scores), "length limit might eliminate some predictions, pls check"
+                pred_acc_score_d = defaultdict(lambda :0) # key: pred  value: pred_score
+                # 1. agg same answer's probs
+                for (p, ps) in zip(preds, pred_scores):
+                    pred_acc_score_d[p] += ps
+                # 2. set a threshold to filter answers
+                import pdb; pdb.set_trace()
+                print("check the reasonable pred score threshold and keep answer scheme")
+                threshold = 0
+                preds = [p for p in preds if pred_acc_score_d[p] > threshold]
+                # 3. but keep at least one answer
+                if len(preds) == 0:
+                    preds = [sorted(pred_acc_score_d.items(), key = lambda item:item[1], reverse=True)[0][0]  ] # sort in a decreasing order + index on the first key
+
+                # this score is final score of the concatenated answer and it shows the confidence of all filtered answers
+                pred_score = sum(pred_scores) 
                 preds = "<sep>".join(preds)
-                prediction_dict[i] = preds
-            # import pdb
-            # pdb.set_trace()
-            # print("check predictions ")
-        
+                prediction_dict[i] = (preds, pred_score)
+
             predictions = prediction_dict  # rename for convenince
-            # import pdb
-            # pdb.set_trace()
+
         print("check predict dict")
 
                 
