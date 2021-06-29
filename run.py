@@ -518,6 +518,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
             question_ids = batch[2]
             decoder_input_ids = batch[3]
 
+            
             # generate outputs
             if args.n_gpu > 1:
                 pool = mp.Pool(30)
@@ -575,7 +576,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 for (idx, q_id) in enumerate(question_ids):
                     try:
                         print(f"check prediction(pred_score) {q_id} ({normed_probs[idx]}): ",
-                              preds[idx], " answer: ", answers[idx])
+                              preds[idx], "||| answer: ", answers[idx])
                         prediction_dict[q_id].append(
                             (preds[idx], normed_probs[idx], answers[idx]))
                     except IndexError:

@@ -677,13 +677,6 @@ class QAData(object):
             eval_pool = mp.Pool(num_eval_processes)
             if type(predictions) == defaultdict:
                 question_indices = [key for key in predictions.keys()]
-
-                # get predictions for w or w/o pred scores
-                # if type(predictions[question_indices[0]]) == tuple:
-                #     predictions = [predictions[q_idx][0]
-                #                    for q_idx in question_indices]
-                # else:
-
                 # predictions was dictionary 
                 predictions = [predictions[q_idx]
                                 for q_idx in question_indices]

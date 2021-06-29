@@ -12,6 +12,7 @@ import string
 import re
 import torch
 import scipy
+import copy
 from scipy.special import log_softmax
 from dateutil.parser import ParserError, parse
 from number_parser import parse_number
@@ -203,6 +204,14 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                    answer_type, is_training, is_ambig, args,
                    logging_prefix, logger,
                    rank_threshold=None, clustered_passages_path=None) -> dict():
+    """ Process question, passages and answers. 
+
+
+    Returns:
+        [type]: [description]
+    """
+
+    
 
     
     # TODO: test ambig bart first
@@ -233,7 +242,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
     clustering_results = dict()
     num_clusters = 0
     num_passages = 0
-    questions_with_clustered_passages = []
+    questions_n_passages = []
     if args.passage_clustering:
         assert is_ambig == True, "PC mode: must be for ambig or multi-answer datasets"
         assert rank_threshold is not None, "PC mode: there should be a PC rank threhold."
@@ -275,6 +284,9 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
             # top PC number of different titles. Expecting number of titles are less in the top PC.
             # on average the numer of title in each PC. expect less title in top clusters (high rank, more accurate)
             title_distribution_d = defaultdict(lambda: 0)
+
+
+            # iterate answer metadata
             for (i, cur_md) in enumerate(metadata):
                 clusters_passages, num_cluster_for_question_i, num_passages_for_question_i = passages.get_clustered_passages(
                     i, rank_threshold)  # 2-d list
@@ -285,10 +297,10 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                 # Problem: they are not constrained by max_input_length correctly 
                 # and are not the actual input
 
-
+                # add 
                 if args.is_contrastive:
-                    questions_with_clustered_passages.append(dict())
-                    qp_d = questions_with_clustered_passages[-1]
+                    questions_n_passages.append(dict())
+                    qp_d = questions_n_passages[-1]
                     qp_d["pos"] = []
                     qp_d["neg"] = []
                     # 1. needs truncation here?  probably not, we can directly check. 
@@ -331,17 +343,19 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                         qp_d["neg"].append(
                             neg_cluster_qp_concatenation)
                 else:
-                    questions_with_clustered_passages.append([])
-                    qp_l = questions_with_clustered_passages[-1]
+                    questions_n_passages.append([])
+                    qp_l = questions_n_passages[-1]
                      
-                    import copy
+
                     
                     updated_md = copy.deepcopy(cur_md)
-                    for (i, p_cluster) in enumerate(clusters_passages):  # it's ordered
+
+                    # i is question index and j is cluster index
+                    for (j, p_cluster) in enumerate(clusters_passages):  # it's ordered
                         # reset qp concatenation
                         cluster_qp_concatenation = questions[i]
                         cluster_qp_concatenation += " </s>  <s>"
-                        title_distribution_d[i] += len(set([p["title"] for p in p_cluster]))
+                        title_distribution_d[j] += len(set([p["title"] for p in p_cluster]))
                         start = True
                         for p in p_cluster:
 
@@ -349,12 +363,12 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                             found_answer, updated_md = is_answer_set_in_passsages(
                                 updated_md, p["text"], answers,True)
                             if found_answer:
-                                exclusive_answer_distribution_d[i] += 1
+                                exclusive_answer_distribution_d[j] += 1
                             
                             found_answer = is_answer_set_in_passsages(
                                 cur_md, p["text"], answers)
                             if found_answer:
-                                answer_distribution_d[i] += 1
+                                answer_distribution_d[j] += 1
 
                             
                                 
@@ -373,21 +387,19 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                         qp_l.append(
                             cluster_qp_concatenation)
 
-            for i in range(num_clusters):
-                title_distribution_d[i] /= len(metadata)
-            if args.check:
+            for j in range(num_clusters):
+                title_distribution_d[j] /= len(metadata)
+            if args.pdb_debug:
                 import pdb; pdb.set_trace()
-            print("check title_distribution_d and answer_distribution_d and questions_with_clustered_passages")
+                print("check title_distribution_d and answer_distribution_d and questions_n_passages")
             num_questions = len(questions)
             clustering_results = dict()
             clustering_results["num_clusters"] = num_clusters
             clustering_results["num_passages"] = num_passages
             clustering_results["num_questions"] = num_questions
-            clustering_results["questions_n_passages"] = questions_with_clustered_passages
+            clustering_results["questions_n_passages"] = questions_n_passages
             with open(clustered_passages_path, "wb") as fp:
                 pickle.dump(clustering_results, fp)
-            # mark the begining of passages
-            questions_n_passages = questions_with_clustered_passages
             logger.info(
                 f"Average number of clusters is (better be around 2): {num_clusters/num_questions}")
             logger.info(
@@ -424,9 +436,11 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
 
         num_eliminated_qp = 0
         answer_presence_d = defaultdict(lambda: 0)
+        assert len(questions_n_passages) == len(
+            metadata), (len(questions_n_passages), len(metadata))
         # format QP and A
         for idx, (cur_qp, cur_md) in enumerate(zip(questions_n_passages, metadata)):
-            
+            # import pdb; pdb.set_trace()
             found_answers_for_one_question = []
             # check existance of answers for latter joining (for evaluation)
             for cur_md_for_qa_pair in cur_md:
@@ -474,7 +488,6 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
             # NOTE: for regular training mode(no passage clustering), we still add answers for every question
             # add answers separately for each clusters for training + passage clustering mode
             if is_training and args.passage_clustering:
-                # new type of
                 # is_training -> seprate pairs of QP and A
                 # not is_training -> combine as we used to do
                 for (cluster_rank, cur_qp_str) in enumerate(cur_qp["pos"] if args.is_contrastive else cur_qp):
@@ -491,10 +504,11 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                             # acceptable answers for one qa pair
                             answer_for_qa_pair = answers[start:end]
                             for cur_a_str in answer_for_qa_pair:
-                                # import pdb; pdb.set_trace()
-                                # print("cur_a_str: ", cur_a_str)
-                                # print("is_answer_in_passages: ", is_answer_in_passages(
-                                #     cur_a_str, cur_qp_str))
+                                if args.pdb_debug:
+                                    # import pdb; pdb.set_trace()
+                                    print("cur_a_str: ", cur_a_str)
+                                    print("is_answer_in_passages: ", is_answer_in_passages(
+                                        cur_a_str, cur_qp_str))
                                 if is_answer_in_passages(cur_a_str, cur_qp_str):
                                     found_answer_for_qa_pair.append(
                                         cur_a_str)
@@ -596,8 +610,6 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                     question_indices.extend(
                         [question_id] * len(cur_qp["pos"]))
 
-                    # import pdb; pdb.set_trace()
-                    # print("check first new_questions ")
                     question_end_idx = len(new_questions)
                     assert len(new_questions) == len(
                         question_indices), "length shoudl be the same"
@@ -638,41 +650,87 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                     answer_metadata.append(
                         (answer_start_idx, answer_end_idx))
                 else:
-                    answer_start_idx = len(new_answers)
-                    # maintain its 1-D format
-                    new_answers.extend(cur_answers)
-                    answer_end_idx = len(new_answers)
-
-                    question_start_idx = len(new_questions)
-                    # rename for some clarity
-                    question_id = question_ids[idx]
                     if args.passage_clustering:
-                        # check cluster passages
-                        new_questions.extend(cur_qp)
-                        question_indices.extend(
-                            [question_id] * len(cur_qp))
+                        # for each 
+                        for i in range(len(cur_qp)):
+                            answer_start_idx = len(new_answers)
+                            # maintain its 1-D format
+                            new_answers.extend(cur_answers)
+                            answer_end_idx = len(new_answers)
+
+
+                            # qp and question id
+                            question_start_idx = len(new_questions)
+                            question_id = question_ids[idx]
+                            new_questions.append(cur_qp[i])
+                            question_indices.append(question_id)
+                            question_end_idx = len(new_questions)
+                            assert len(new_questions) == len(
+                                question_indices), "length should be the same"
+                            # TODO: find a way to save the question ids
+
+                            question_metadata.append(
+                                (question_start_idx, question_end_idx))
+                            answer_metadata.append(
+                                (answer_start_idx, answer_end_idx))
                     else:
+                        answer_start_idx = len(new_answers)
+                        # maintain its 1-D format
+                        new_answers.extend(cur_answers)
+                        answer_end_idx = len(new_answers)
+
+                        question_start_idx = len(new_questions)
+                        # rename for some clarity
+                        question_id = question_ids[idx]
+
                         new_questions.append(cur_qp)  #
                         question_indices.append(question_id)
-                    # import pdb; pdb.set_trace()
-                    # print("check first new_questions ")
-                    question_end_idx = len(new_questions)
-                    assert len(new_questions) == len(
-                        question_indices), "length should be the same"
-                    # TODO: find a way to save the question ids
+                        # import pdb; pdb.set_trace()
+                        # print("check first new_questions ")
+                        question_end_idx = len(new_questions)
+                        assert len(new_questions) == len(
+                            question_indices), "length should be the same"
+                        # TODO: find a way to save the question ids
 
-                    question_metadata.append(
-                        (question_start_idx, question_end_idx))
-                    answer_metadata.append(
-                        (answer_start_idx, answer_end_idx))
+                        question_metadata.append(
+                            (question_start_idx, question_end_idx))
+                        answer_metadata.append(
+                            (answer_start_idx, answer_end_idx))
+
+                    # answer_start_idx = len(new_answers)
+                    # # maintain its 1-D format
+                    # new_answers.extend(cur_answers)
+                    # answer_end_idx = len(new_answers)
+
+                    # question_start_idx = len(new_questions)
+                    # # rename for some clarity
+                    # question_id = question_ids[idx]
+                    # if args.passage_clustering:
+                    #     # check cluster passages
+                    #     new_questions.extend(cur_qp)
+                    #     question_indices.extend(
+                    #         [question_id] * len(cur_qp))
+                    # else:
+                    #     new_questions.append(cur_qp)  #
+                    #     question_indices.append(question_id)
+                    # # import pdb; pdb.set_trace()
+                    # # print("check first new_questions ")
+                    # question_end_idx = len(new_questions)
+                    # assert len(new_questions) == len(
+                    #     question_indices), "length should be the same"
+                    # # TODO: find a way to save the question ids
+
+                    # question_metadata.append(
+                    #     (question_start_idx, question_end_idx))
+                    # answer_metadata.append(
+                    #     (answer_start_idx, answer_end_idx))
         
-        import pdb; pdb.set_trace()
-
         if args.passage_clustering:
-            import pdb
-            pdb.set_trace()
-            print("check answer_presence_d")
-            print("check num_eliminated_qp ")
+            if args.pdb_debug:
+                import pdb
+                pdb.set_trace()
+                print("check answer_presence_d")
+                print("check num_eliminated_qp ")
 
             logger.info(
                 logging_prefix + f"Selected qp ratio: {len(question_metadata)/len(questions_n_passages)}")
