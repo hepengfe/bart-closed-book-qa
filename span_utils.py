@@ -25,7 +25,7 @@ def some_generic_dump_pickle(d, path):
         pickle.dump(d, fp)
 
 def some_generic_load_pickle(d, path):
-    with open(path, "rb") as fp:
+    with open(path, "rb") as fp: 
         d = pickle.load(fp)
     return d
 

@@ -156,8 +156,9 @@ def run(args, logger):
         dev_data.load_dataloader()
 
     model_prefix = f"[{args.model.upper()}]\t"
+    
     if args.checkpoint is not None:
-
+        
         if args.checkpoint.endswith(".pt"): # load old type of checkpoint
             logger.info(f"{model_prefix}Load old model with pt data format")
             def convert_to_single_gpu(state_dict):
@@ -666,7 +667,7 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 preds = [p for p in preds if pred_acc_score_d[p] > threshold]
                 # 3. but keep at least one answer for one question if all answers are below the threshold
                 if len(preds) == 0:
-                    preds = [sorted(pred_acc_score_d.items(), key = lambda item:item[1], reverse=True)[0][0]  ] # sort in a decreasing order + index on the first key
+                    preds = [sorted(pred_acc_score_d.items(), key = lambda item:item[1], reverse=True)[0][0]] # sort in a decreasing order + index on the first key
 
                 # this score is final score of the concatenated answer and it shows the confidence of all filtered answers
                 pred_score = sum(pred_scores) 
@@ -674,10 +675,10 @@ def inference(args, model, dev_data, predict_type, device="cuda", is_ambig = Fal
                 prediction_dict[i] = (preds, pred_score)
 
             predictions = prediction_dict  # rename for convenince
-        avg_pred_score = sum(all_pred_scores)/len(all_pred_scores)
-        import pdb; pdb.set_trace()
-        print("check pred scores ")
-        print("check predict dict")
+            avg_pred_score = sum(all_pred_scores)/len(all_pred_scores)
+            import pdb; pdb.set_trace()
+            print("check pred scores ")
+            print("check predict dict")
 
 
 

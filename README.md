@@ -16,8 +16,8 @@ This code is tested on Python 3.6.9.
 
 Install PyTorch and Transformers:
 ```
-pip install torch==1.1.0
-pip install git+https://github.com/huggingface/transformers.git@7b75aa9fa55bee577e2c7403301ed31103125a35
+pip3 install torch==1.10.0+cu113 torchvision==0.11.1+cu113 torchaudio==0.10.0+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
+pip install transformers==4.3.3
 ```
 
 Download NQ-open data:
