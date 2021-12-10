@@ -22,11 +22,9 @@ from bart import MyBartModel
 from span_utils import preprocess_span_input, eval, preprocess_qpa, dump_pickle, load_pickle
 
 from numpy import random
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, SpectralClustering
+from pyclustering.cluster.xmeans import xmeans
 import multiprocessing as mp
-
-
-
 import csv
 
 
@@ -52,27 +50,28 @@ class QAData(object):
         self.dataset_type = dataset_type
         # add args.debugTrainCode which use small sample data
         # add args.debugTrainTrain which uses dev data 
-
-        if args.debugTrain:
-            self.data_path = data_path.replace("train", "dev")
-            # under debug
-            # we don't want to save train file as dev
-            # we want to load dev file as train  (we simply don't save)
-            dataset_type_for_file_accessing = "dev"
-        else:
+        
+        if args.debugTrain or args.debugCode:
+            if args.debugTrain:
+                self.data_path = data_path.replace("train", "dev")
+                # under debug
+                # we don't want to save train file as dev
+                # we want to load dev file as train  (we simply don't save)
+                dataset_type_for_file_accessing = "dev"
             if args.debugCode:
                 dataset_type_for_file_accessing = "debug"
-            else:
-                
-                if args.fine_tune:
-                    logger.info(
-                        "Not AmbigQA test dataset available, using dev dataset")
-                    if not self.is_training:
-                        dataset_type_for_file_accessing = "dev"  # fine tuning stage
-                    else:
-                        dataset_type_for_file_accessing = dataset_type
+                self.data_path = data_path.replace("dev", "debug")
+        else:
+            # neither debugTrain nor debugCode
+            if args.fine_tune:
+                logger.info(
+                    "Not AmbigQA test dataset available, using dev dataset")
+                if not self.is_training:
+                    dataset_type_for_file_accessing = "dev"  # fine tuning stage
                 else:
                     dataset_type_for_file_accessing = dataset_type
+            else:
+                dataset_type_for_file_accessing = dataset_type
         # NOTE: self.data is the original data. Not tokenized nor encoded.
         with open(self.data_path, "r") as f:
             # format example: [ {'id': '-8178292525996414464', 'question': 'big little lies season 2 how many episodes', 'answer': ['seven']}, ..... ]
@@ -103,12 +102,15 @@ class QAData(object):
         # self.load = not args.debugTrain  # do not load the large tokenized dataset
         self.logger = logger
         self.args = args
+        # set self.data_type for logging
         if "test" in self.data_path:
             self.data_type = "test"
         elif "dev" in self.data_path:
             self.data_type = "dev"
         elif "train" in self.data_path:
             self.data_type = "train"
+        elif "debug" in self.data_path:
+            self.data_type = "debug"
         else:
             raise NotImplementedError()
 
@@ -126,7 +128,7 @@ class QAData(object):
         if self.args.passage_clustering: # only need to load when using passage clustering
             self.clustered_passages_path = "data/clustering_results/AmbigQA_"
             postfix = ["top", self.args.num_top_passages, "passages",
-                       self.data_type, "is_training", self.is_training, "is_contrastive", self.args.is_contrastive, "rank_threshold", self.args.rank_threshold]
+                       self.data_type, "is_training", self.is_training, "is_contrastive", self.args.is_contrastive]
             postfix = [str(x) for x in postfix]
             postfix = "_".join(postfix)
             if self.args.debugTrain:
@@ -166,9 +168,8 @@ class QAData(object):
             args.data_folder_path, f"{data_file_n}{dataset_type_for_file_accessing}.json")
         self.top_k_passages = args.num_top_passages
         self.metric = "EM" if self.dataset_name == "nq" else "F1"
-        self.sep_token = self.tokenizer.sep_token
+        self.sep_token = "<SEP>"
         # self.sep_token = " " + self.sep_token + " "
-
 
         self.logging_prefix = None
 
@@ -272,10 +273,10 @@ class QAData(object):
            prepend_question_token = True
         if self.args.augment_k_times == 1:
             postfix = [postfix, "max_input_length", self.max_input_length, "top",  
-                self.top_k_passages,  "rank_threshold", self.args.rank_threshold, self.answer_type, "is_training", self.is_training]  # TODO: can be written more elegantly by using dictionary
+                self.top_k_passages, self.answer_type, "is_training", self.is_training]  # TODO: can be written more elegantly by using dictionary
         else:
             postfix = [postfix, "max_input_length", self.max_input_length, "top",  
-                self.top_k_passages, "rank_threshold", self.args.rank_threshold ,self.answer_type, "answers",  self.args.augment_k_times, "augmentation", "is_training", self.is_training]
+                self.top_k_passages, self.answer_type, "answers",  self.args.augment_k_times, "augmentation", "is_training", self.is_training]
         postfix = [str(x) for x in postfix]
         postfix = "_".join(postfix)
         if self.debugTrain:
@@ -455,7 +456,7 @@ class QAData(object):
                 # flatten answer list
                 answers, metadata = self.flatten(
                     answers, self.dataset_name == "ambig")
-
+                
                 if self.args.do_lowercase:
                     questions = [question.lower() for question in questions]
                     answers = [answer.lower() for answer in answers]
@@ -528,7 +529,7 @@ class QAData(object):
                                             self.top_k_passages, self.tokenizer, 
                                             self.answer_type, self.is_training, True, self.args,
                                             self.logging_prefix, self.logger,
-                                            self.args.rank_threshold, clustered_passages_path)
+                                            clustered_passages_path)
                             qp = qpa_dict["qp"]
                             self.question_ids = qpa_dict["question_ids"]
                             answers = qpa_dict["answers"]
@@ -930,7 +931,23 @@ class topKPassasages():
     This class serves as a modular way of retrieving top k passages of a question for reader
     """
 
-    def __init__(self, k_cluster, passages_path, rank_path, data_path, passage_embedding = None, evaluate=False):
+    def __init__(self, k_cluster, passages_path, rank_path, data_path, 
+                 passage_embedding = None, evaluate=False):
+        """
+        Loading passages and their embeddings.
+
+        self.passages   'title', 'text'
+
+        Args:
+            k_cluster (int): the number of clusters for clustering.
+            passages_path (str): the path to load raw wiki passage data.
+            rank_path (str):  the path to load (DPR) ranking results.
+            data_path (str): the path to load QA data.
+            passage_embedding (str, optional): the path to load (DPR)
+                passage embeddings.
+            evaluate (bool, optional): True for evaluating top k passage MACRO
+                recall. False otherwise. Defaults to False.
+        """
         # load wiki passages and store in dictionary
 
         # a list of lists of passsages ids   [ [ 3,5, ], ...  ]
@@ -967,61 +984,63 @@ class topKPassasages():
         self.passage_embeddings = passage_embeddings
     
     def get_clustered_passages(self, q_id: int,
-                               clustering_method: str="kmeans",
-                               rank_threshold=100):
+                               clustering_method: str="kmeans"):
         """
         Get a list of clustered passages given a quesiton id. 
 
+        It first retrieves top k passage embeddings given question id,
+        then perform clustering method on passage embeddings,
+        we then add passages based on passage indexing on self.passages
+        
         Args:
             q_id (int): zero-based question id.
             clustering_method: kmeans, spectral, x-means
-            rank_threshold (int): hard rank threshold ranges from 0-100. 
-                I don't think it's useful now since we are adding reranker
-                and let it be 100 to keep all passages now.
+            
         Returns:
-            List[List[numpy.array]]: a list of lists of passages.
-                the size is (num_cluster, num_passages_in_the_cluster).
+            Dict[str, List[numpy.array]]: key is cluster label in str.
+                value is a list of clustered passages.
                 cluster is ordered by the closeness to question.
                 cluster_passages under one cluster is ordered by
                     the closeness to question.
         """
         passage_embeddings = self.get_passage_embeddings(
             q_id)
-        kmeans_1 = KMeans(n_clusters=self.k_cluster,
-                          random_state=0).fit(passage_embeddings)
-        # compute stat of clusters
-        cluster_pts_count = dict()
-        for j in range(self.k_cluster):
-            cluster_pts_count[j] = sum(
-                kmeans_1.labels_ == j)
-
-        passages = []
+        if clustering_method == "kmeans":
+            clustering_obj = KMeans(n_clusters=self.k_cluster,
+                            random_state=0).fit(passage_embeddings)
+        elif clustering_method == "spectral":
+            clustering_obj = SpectralClustering(n_clusters=self.k_cluster).fit(passage_embeddings)
+        elif clustering_method == "xmeans":
+            # Create instance of X-Means algorithm. The algorithm will start analysis from 2 clusters, the maximum.
+            # number of clusters that can be allocated is 20.
+            clustering_obj = xmeans(passage_embeddings, 10).process()
+        else:
+            raise NotImplementedError(f"clustering_method {clustering_method}"
+                                      "is not implemented. Please input"
+                                      " implemented ones such as kmeans, "
+                                      "spectral or xmeans.")
         passage_ids = self.ranks[q_id]
-
-        num_cluster_passages_l = []
-        # add top 5 passages' ids from each cluster 
-        for cluster_label in filtered_clusters:
-            cluster_passages = []
-            for j in range(len(kmeans_1.labels_)):  # iterate all cluster labels and keep the order
-
-                if kmeans_1.labels_[j] == cluster_label:
-                    passage_id = passage_ids[j]
-                    cluster_passages.append(
-                        self.passages[passage_id])
-            num_cluster_passages_l.append(len(cluster_passages) )
-            assert len(cluster_passages) > 0, "each cluster should have more than one passages and less than five passages"
-            passages.append(cluster_passages)
-        assert len(passages) >= 1, "There should be more than one cluster"
-
-        return passages
+        # clustering results might have more or less clusters
+        # we need to be adaptive to the various number of clusters
+        passage_clusters = defaultdict(list)
+        for c_label, p_id in zip(clustering_obj.labels_, passage_ids):
+            passage = self.passages[p_id]
+            # cluster ranking is inherantly in c_label
+            # passage ranking (w.r.t question) is also ordered in list
+            passage_clusters[str(c_label)].append(passage)
+        return passage_clusters
 
 
     def get_passages(self, i, k):
         """
         0-indexed based retrieval to get top k passages.
         Note that rank, answers and passages are lists with the same length
-        :param i: index
-        :return: a list of passage dictionary {title:str, text:str}
+        Args:
+            i (int): index of question id.
+            k (int): the number of passages to be retrieved.
+
+        Returns:
+            List: a list of passage dictionary {title:str, text:str}
         """
         top_k_ranked_passage_ids = self.ranks[i][:k]
         # get rank prediction
@@ -1030,7 +1049,6 @@ class topKPassasages():
     def get_passage_embeddings(self, i):
         assert self.passage_embeddings is not None, "passage embedding is not loaded"
         passage_embeddings = []
-         
         for passage_id in self.ranks[i]:
             try:
                 passage_embeddings.append(self.passage_embeddings[passage_id])

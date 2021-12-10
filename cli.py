@@ -132,7 +132,6 @@ def main():
     parser.add_argument("--passage_clustering",
                         default=False, action="store_true")
     parser.add_argument("--k_cluster", default = 10, type=int) 
-    parser.add_argument("--rank_threshold", default=100, type=int)
     parser.add_argument("--is_contrastive", default=False, action="store_true")
 
 
