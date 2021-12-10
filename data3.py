@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 import torch
 from torch.utils.data import Dataset, TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from typing import List
 import argparse
 
 import numpy as np
@@ -49,23 +50,29 @@ class QAData(object):
         # determine is_training status now as dataset_type might be modfied later for file accessing
         self.is_training = dataset_type == "train"
         self.dataset_type = dataset_type
+        # add args.debugTrainCode which use small sample data
+        # add args.debugTrainTrain which uses dev data 
 
-        if args.debug:
+        if args.debugTrain:
             self.data_path = data_path.replace("train", "dev")
             # under debug
             # we don't want to save train file as dev
             # we want to load dev file as train  (we simply don't save)
             dataset_type_for_file_accessing = "dev"
         else:
-            if args.fine_tune:
-                logger.info(
-                    "Not AmbigQA test dataset available, using dev dataset")
-                if not self.is_training:
-                    dataset_type_for_file_accessing = "dev"  # fine tuning stage
+            if args.debugCode:
+                dataset_type_for_file_accessing = "debug"
+            else:
+                
+                if args.fine_tune:
+                    logger.info(
+                        "Not AmbigQA test dataset available, using dev dataset")
+                    if not self.is_training:
+                        dataset_type_for_file_accessing = "dev"  # fine tuning stage
+                    else:
+                        dataset_type_for_file_accessing = dataset_type
                 else:
                     dataset_type_for_file_accessing = dataset_type
-            else:
-                dataset_type_for_file_accessing = dataset_type
         # NOTE: self.data is the original data. Not tokenized nor encoded.
         with open(self.data_path, "r") as f:
             # format example: [ {'id': '-8178292525996414464', 'question': 'big little lies season 2 how many episodes', 'answer': ['seven']}, ..... ]
@@ -73,7 +80,7 @@ class QAData(object):
         if type(self.data) == dict:
             self.data = self.data["data"]
         self.processed_data = None
-        if args.debug :
+        if args.debugTrain :
             if self.is_training == False:
                 logger.warn("[DEBUG MODE] Load all dev data")
                 self.data = self.data[:100]
@@ -93,7 +100,7 @@ class QAData(object):
 
         # TODO: correct it back
         self.load = True  # debug mode also needs load
-        # self.load = not args.debug  # do not load the large tokenized dataset
+        # self.load = not args.debugTrain  # do not load the large tokenized dataset
         self.logger = logger
         self.args = args
         if "test" in self.data_path:
@@ -110,18 +117,19 @@ class QAData(object):
         self.dataset = None
         self.dataloader = None
         self.cache = None
-        self.debug = args.debug
-        self.answer_type = "span" if "extraction" in args.predict_type.lower() else "seq" 
+        self.debugTrain = args.debugTrain
+        self.debugCode = args.debugCode
+        self.answer_type = "span" if "extraction" in args.predict_type.lower() else "seq"
 
         self.dataset_name = None  # ambig or nq
         self.passages = None
         if self.args.passage_clustering: # only need to load when using passage clustering
             self.clustered_passages_path = "data/clustering_results/AmbigQA_"
-            postfix = ["top", self.args.top_k_passages, "passages",
+            postfix = ["top", self.args.num_top_passages, "passages",
                        self.data_type, "is_training", self.is_training, "is_contrastive", self.args.is_contrastive, "rank_threshold", self.args.rank_threshold]
             postfix = [str(x) for x in postfix]
             postfix = "_".join(postfix)
-            if self.args.debug:
+            if self.args.debugTrain:
                 postfix += "_debug" # it might affect the number of data 
             self.clustered_passages_path  += postfix 
 
@@ -156,10 +164,10 @@ class QAData(object):
             args.ranking_folder_path, f"{ranking_file_name}{dataset_type_for_file_accessing}.json")
         self.data_path = os.path.join(
             args.data_folder_path, f"{data_file_n}{dataset_type_for_file_accessing}.json")
-        self.top_k_passages = args.top_k_passages
+        self.top_k_passages = args.num_top_passages
         self.metric = "EM" if self.dataset_name == "nq" else "F1"
-        self.sep_token = "<SEP>"
-        self.spaced_sep_token = " " + self.sep_token + " "
+        self.sep_token = self.tokenizer.sep_token
+        # self.sep_token = " " + self.sep_token + " "
 
 
         self.logging_prefix = None
@@ -234,6 +242,21 @@ class QAData(object):
             self.passages = topKPassasages(self.args.k_cluster, self.wiki_passage_path, self.ranking_path, self.data_path)
 
     def load_dataset(self, tokenizer, do_return=False):
+        """
+        Loads encoded data into dataset class. 
+        The pipeline is as follows, and it starts loading/processing
+            from the first data.
+        text data -> tokens data -> encoded data
+
+
+        Args:
+            tokenizer: Pre-trained tokenizer
+            do_return (bool, optional): True for returning dataset,
+                False otherwise. Defaults to False.
+
+        Returns:
+            tokenized dataset.
+        """
         self.logging_prefix = f"[{self.dataset_type} data]\t".upper()
         self.tokenizer = tokenizer
 
@@ -255,8 +278,10 @@ class QAData(object):
                 self.top_k_passages, "rank_threshold", self.args.rank_threshold ,self.answer_type, "answers",  self.args.augment_k_times, "augmentation", "is_training", self.is_training]
         postfix = [str(x) for x in postfix]
         postfix = "_".join(postfix)
-        if self.debug:
-            postfix += "_debug"
+        if self.debugTrain:
+            postfix += "_debugTrain"
+        if self.debugCode:
+            postfix += "_debugCode"
         
         if self.args.passage_clustering:
             postfix += "_clustered"
@@ -284,7 +309,7 @@ class QAData(object):
         def remove_confirmation_prompt(file_name):
             prompt = input(
                 f"Confirm to remove {file_name}? (y/n)      ").lower()
-            return  prompt == "yes"  or prompt == "y"
+            return  prompt.lower() == "yes"  or prompt.lower() == "y"
         if self.args.retokenize == True:
             if remove_confirmation_prompt("tokenization file"):
                 safe_remove(tokenized_path)
@@ -308,8 +333,9 @@ class QAData(object):
         # General procedure:
         # 1. check if pickle cache exists
         # 2. if not, check if tokenized data exists
-        # 3. if not, preprocess(load passages and encode) from scratch
+        # 3. if not, preprocess(load passages and encode) from raw text data
         if self.load and self.cache:
+            # found encoded data
             self.logger.info(
                 self.logging_prefix + f"Found pickle cache, start loading {encoded_input_path}")
             if self.answer_type == "seq":
@@ -328,7 +354,6 @@ class QAData(object):
                 if self.dataset_name == "ambig":
                     for (idx, joined_answers) in enumerate(joined_answers_l):
                         self.data[idx]["answers"] = joined_answers
-                # inputs are lists of integers
 
             elif self.answer_type == "span":
                 d = preprocess_span_input(
@@ -349,12 +374,14 @@ class QAData(object):
             else:
                 self.logger.warn("wrong answer type")
                 exit()
-        else:  # not found pickle cache
+        else:  
+            # not found pickle cache
             self.logger.info(self.logging_prefix +
                              "Not found pickle cache, start preprocessing...")
             
 
-            if self.load and os.path.exists(tokenized_path): # found tokenized path
+            if self.load and os.path.exists(tokenized_path): 
+                # not found pickle cache -> found tokenized path
                 self.logger.info(
                     self.logging_prefix + "Loading pre-tokenized data from {}".format(tokenized_path))
                 with open(tokenized_path, "r") as f:
@@ -372,7 +399,8 @@ class QAData(object):
                         exit()
                     self.logger.info(
                         self.logging_prefix + f"Passage kept rate(after truncation): {passage_coverage_rate * 100} %")
-            else:  # not found tokenized data 
+            else:  
+                # not found pickle cache -> not found tokenized data 
                 self.logger.info(
                     self.logging_prefix + "Not found tokenized data, start tokenizing...")
 
@@ -391,7 +419,6 @@ class QAData(object):
                     for (idx, data_entry) in enumerate(self.data):
 
                         cur_answer = []
-
                         # Q: does data_entry has more than one annotations? Or each answer is categorized
                         for qa_d in data_entry["annotations"]:
                             # import pdb
@@ -437,10 +464,10 @@ class QAData(object):
                 self.logger.info(self.logging_prefix +
                                  "Start concatenating question and passages ")
 
-
+                # tokenize questions, passages and answers
                 if self.answer_type == "seq":
                     if self.dataset_name == "nq":  # nq seq answer
-                        qp = ["<s> " + q for q in questions]
+                        qp = [self.tokenizer.bos_token + q for q in questions]
                         # TODO: add them to arguments
                         # note that after this questions are actually a concatenation of questions and passages
                         self.logger.info(self.logging_prefix + f"Start concatenating question and passages for top {self.top_k_passages} passages")
@@ -448,14 +475,13 @@ class QAData(object):
                             self.top_k_passages, self.wiki_passage_path, self.ranking_path, self.data_path)
                         for i in tqdm(range(len(qp))):
                             # mark the begining of passages
-                            qp[i] += " <s> "
                             # add passage one by one
-                            for p in self.passages.get_passages(i, self.args.top_k_passages):
+                            for p in self.passages.get_passages(i, self.args.num_top_passages):
                                 # format: [CLS] question [SEP] title 1 [SEP] passages
-                                qp[i] += self.spaced_sep_token + \
-                                    p["title"] + self.spaced_sep_token + p["text"]
+                                qp[i] += self.sep_token + \
+                                    p["title"] + self.sep_token + p["text"]
                             # mark the begining of passages
-                            qp[i] += " </s> "
+                            qp[i] += self.tokenizer.eos_token
                         question_metadata = None 
                         answer_metadata = None
                         # NOTE: no need to rename
@@ -466,15 +492,13 @@ class QAData(object):
                     elif self.dataset_name == "ambig":  # ambig seq answer
                         # TODO: add function pre_process in utils.py
                         if prepend_question_token:  # T5
-                            qp = ["<s> question: " +
+                            qp = [tokenizer.bos_token + "question: " +
                                          question for question in questions]  # t5 tokenizer doesn't have <s>
                         else:
-                            qp = ["<s> " + q for q in questions]  # Bart
-                        qp = [q + " </s> " for q in qp]
-                        questions_with_clustered_passages = []
-                        # TODO: add them to arguments
-                        # note that after this questions are actually a concatenation of questions and passages
-                        all_qp_concatenation_list = []
+                            qp = [tokenizer.bos_token + q for q in questions]
+                        # Bart
+                        qp = [q + tokenizer.eos_token for q in qp]
+
                         self.logger.info(
                             self.logging_prefix + f"Start concatenating question and passages for top {self.top_k_passages} passages")
                         # import pdb; pdb.set_trace() 
@@ -564,7 +588,7 @@ class QAData(object):
                         cur_titles = []
                         cur_passages = []
 
-                        for p in self.passages.get_passages(i, self.args.top_k_passages):
+                        for p in self.passages.get_passages(i, self.args.num_top_passages):
                             cur_titles.append(p["title"])
                             cur_passages.append(p["text"])
                         all_titles.append(cur_titles)
@@ -942,17 +966,27 @@ class topKPassasages():
     def set_passage_embeddings(self, passage_embeddings):
         self.passage_embeddings = passage_embeddings
     
-    def get_clustered_passages(self, i, rank_threshold):
-        """Indexed on quesiton id and return clusters of passages
+    def get_clustered_passages(self, q_id: int,
+                               clustering_method: str="kmeans",
+                               rank_threshold=100):
+        """
+        Get a list of clustered passages given a quesiton id. 
 
         Args:
-            i ([type]): [description]
+            q_id (int): zero-based question id.
+            clustering_method: kmeans, spectral, x-means
+            rank_threshold (int): hard rank threshold ranges from 0-100. 
+                I don't think it's useful now since we are adding reranker
+                and let it be 100 to keep all passages now.
         Returns:
-            [type]: [description]
+            List[List[numpy.array]]: a list of lists of passages.
+                the size is (num_cluster, num_passages_in_the_cluster).
+                cluster is ordered by the closeness to question.
+                cluster_passages under one cluster is ordered by
+                    the closeness to question.
         """
-        
         passage_embeddings = self.get_passage_embeddings(
-            i)
+            q_id)
         kmeans_1 = KMeans(n_clusters=self.k_cluster,
                           random_state=0).fit(passage_embeddings)
         # compute stat of clusters
@@ -961,65 +995,25 @@ class topKPassasages():
             cluster_pts_count[j] = sum(
                 kmeans_1.labels_ == j)
 
-        cluster_ranks = dict()
-        
-
-        # add up ranks
-        for j in range(len(kmeans_1.labels_)): # count up to the number of points 
-            cluster_label = kmeans_1.labels_[j]
-            # TODO: defaultdict
-            if cluster_label in cluster_ranks.keys():
-                cluster_ranks[cluster_label] += j
-            else:
-                cluster_ranks[cluster_label] = j 
-        # average ranks
-        for j in range(self.k_cluster):
-            cluster_ranks[j] /= cluster_pts_count[j]
-        
-        sorted_cluster_ranks=  sorted(cluster_ranks.items(),
-                key=lambda item: item[1])
-        # we want the smallest few. (ranked higher)
-        print(sorted_cluster_ranks)
-
-
-
-        # add top-k cluster
-        filtered_clusters = []
-        for (cluster_label, avg_rank) in sorted_cluster_ranks:
-            if avg_rank < rank_threshold:
-                filtered_clusters.append(
-                    cluster_label)
-            else:
-                break
-        if len(filtered_clusters) == 0:
-            filtered_clusters.append(sorted_cluster_ranks[0][0]) # append the first cluster label 
-
-
         passages = []
-        passage_ids = self.ranks[i]
+        passage_ids = self.ranks[q_id]
 
         num_cluster_passages_l = []
         # add top 5 passages' ids from each cluster 
         for cluster_label in filtered_clusters:
-        
             cluster_passages = []
             for j in range(len(kmeans_1.labels_)):  # iterate all cluster labels and keep the order
 
                 if kmeans_1.labels_[j] == cluster_label:
                     passage_id = passage_ids[j]
-
                     cluster_passages.append(
                         self.passages[passage_id])
-                if len(cluster_passages) == 5: # TODO: change 5 to top_k argument
-                    break
             num_cluster_passages_l.append(len(cluster_passages) )
-            assert len(cluster_passages) > 0 and len(cluster_passages) <= 5, "each cluster should have more than one passages and less than five passages"
+            assert len(cluster_passages) > 0, "each cluster should have more than one passages and less than five passages"
             passages.append(cluster_passages)
         assert len(passages) >= 1, "There should be more than one cluster"
-        num_cluster_for_question_i = len(num_cluster_passages_l)
-        num_selected_cluster_passages_for_question_i = sum(num_cluster_passages_l)
-        
-        return passages, num_cluster_for_question_i, num_selected_cluster_passages_for_question_i
+
+        return passages
 
 
     def get_passages(self, i, k):

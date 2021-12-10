@@ -200,17 +200,60 @@ def is_answer_a_date_or_infreq_digit(answer_str):
 
 
 def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
-                    top_k_passages,  tokenizer, 
+                    num_top_passages,  tokenizer, 
                    answer_type, is_training, is_ambig, args,
                    logging_prefix, logger,
                    rank_threshold=None, clustered_passages_path=None) -> dict():
-    """ Process question, passages and answers. 
+    """
+    Concatenate question and passages, answers.
+    First tokenize and then concatenate them with using tokenizer sep id.
 
+    Args:
+        questions (List[str]): a list of question text data. 
+            list length is the number of question.
+        question_ids (List[str]): a list of question ids.
+            list length is the number of question.
+        answers (List[str]): a list of flattened answers.
+            list length is the number of flattened answers.
+        metadata (List[List[tuple]]): a list of lists of tuples.
+            (num_questions, num answer semantics, num_answer of one semantic)
+        data (Dict[str, str]):
+            annotation: a list of answer semantics in dictionary format
+                with annotated answer type. For example, 
+                'annotations': [{'type': 'singleAnswer', 'answer': ['usually continues uninterrupted until death']}, {'type': 'singleAnswer', 'answer': ['constant', 'usually continues uninterrupted until death']}]
+            id: question id. 
+            question: question text.
+        num_top_passages (int): 
+            number of top passages to select.
+        tokenizer: Pre-trained tokenizer
+        answer_type(str): 'seq' for seq2seq model output and 'span' for 
+            SpanExtraction model output. It has effect on answer preprocess.
+        is_training (bool): True for training mode and only answer presented in
+            passages will be kept. False for evaluation/test mode and all
+            answers will be kept.
+        is_ambig (bool): True for preprocess NQ dataset, and False for
+            preprocess AMBIG dataset.
+        args: parsed argument.
+        logging_prefix(str): prefix logging dataset types.
+            for example, '[TEST DATA]\t'.
+        logger: logger.
+        rank_threshold: might be deleted later as we are adding reranker.
+        clustered_passages_path:
+            clustered passage tokens pickle data.
 
     Returns:
-        [type]: [description]
+        Dict[str, Data]: Dictionary stores token data for later encoding.
+            qpa_dict["qp"]: concatenation of the question and passages 
+            qpa_dict["question_ids"] = question_ids
+            qpa_dict["answers"] = answers
+            qpa_dict["question_metadata"] = question_metadata
+            qpa_dict["answer_metadata"] = answer_metadata
+            qpa_dict["joined_answers_l"] = joined_answers_l
+            qpa_dict["data"] = data
     """
 
+    import pdb; pdb.set_trace()
+    print('check preprocess_qpa args')
     
 
     
@@ -223,12 +266,6 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
     # TODO: check where the 5gb GPU memory comes from by setting pdb
         # something in training mode (as in prediciton mode there is no such a memory)
 
-    # TODO: contrastive
-        # encode file name   (add contrastive, if not contrastive, don't add contrastive (keep it the same))
-        # tokenize file name 
-        # each cluster will have at most one positive example and at most one negative example 
-        # 
-    # 
     # TODO: provide more clustering analytics. Given a question, how is the clustering? 
         # top-k passages contain the answer and top-k passages doesn't contain the answer.
 
@@ -248,8 +285,10 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
         assert rank_threshold is not None, "PC mode: there should be a PC rank threhold."
         assert clustered_passages_path is not None, "PC mode: there should be a clustered_passages_path"
 
-    sep_token = "<SEP>"
-    spaced_sep_token = " " + sep_token + " "
+    sep_token = tokenizer.sep_token
+    eos_token = tokenizer.eos_token
+    
+    sep_token = " " + sep_token + " "
 
     question_metadata = []
     joined_answers_l = []
@@ -262,14 +301,27 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
             # end of question and start of passages
             questions[i] += " </s>  <s>"
             # add passage one by one
-            for p in passages.get_passages(i, top_k_passages):
+            for p in passages.get_passages(i, num_top_passages):
                 # format: [CLS] question [SEP] title 1 [SEP] passages
-                questions[i] += spaced_sep_token + \
-                    p["title"] + spaced_sep_token + p["text"]
+                questions[i] += sep_token + \
+                    p["title"] + sep_token + p["text"]
             # mark the begining of passages
             questions[i] += " </s> "
     else:
         if args.passage_clustering:
+
+            clustered_raw_data_path = ""
+            if not os.path.exists(clustered_raw_data_path):
+                # clustering 
+                # store all clustering data in tokens to a json file
+                for (i, cur_md) in enumerate(metadata):
+                    clusters_passages = passages.get_clustered_passages(
+                        i, rank_threshold=100)  # 2-d list
+            # load json file.
+        
+                
+            
+            
             logger.info(
                 logging_prefix + "Concatenating clustering results...")
             assert len(question_ids) == len(
@@ -303,8 +355,8 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                     qp_d = questions_n_passages[-1]
                     qp_d["pos"] = []
                     qp_d["neg"] = []
-                    # 1. needs truncation here?  probably not, we can directly check. 
-                    # 2. check presence of answer. 
+                    # 1. needs truncation here?  probably not, we can directly check.
+                    # 2. check presence of answer.
                     for p_cluster in clusters_passages:  # it's ordered
                         # reset qp concatenation
                         cluster_qp_concatenation = questions[i]
@@ -317,24 +369,24 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                             if is_answer_set_in_passsages(cur_md, p["text"], answers):
                                 if pos_start:
                                     pos_cluster_qp_concatenation += p["title"] + \
-                                        spaced_sep_token + \
+                                        sep_token + \
                                         p["text"]
                                     pos_start = False
                                 else:
-                                    pos_cluster_qp_concatenation += spaced_sep_token + \
+                                    pos_cluster_qp_concatenation += sep_token + \
                                         p["title"] + \
-                                        spaced_sep_token + \
+                                        sep_token + \
                                         p["text"]
                             else:
                                 if neg_start:
                                     neg_cluster_qp_concatenation += p["title"] + \
-                                        spaced_sep_token + \
+                                        sep_token + \
                                         p["text"]
                                     neg_start = False
                                 else:
-                                    neg_cluster_qp_concatenation += spaced_sep_token + \
+                                    neg_cluster_qp_concatenation += sep_token + \
                                         p["title"] + \
-                                        spaced_sep_token + \
+                                        sep_token + \
                                         p["text"]
                         pos_cluster_qp_concatenation += " </s> "
                         neg_cluster_qp_concatenation += " </s> "
@@ -375,12 +427,12 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                             # format: [CLS] question [SEP] title 1 [SEP] passages
                             if start:
                                 cluster_qp_concatenation += p["title"] + \
-                                    spaced_sep_token + \
+                                    sep_token + \
                                         p["text"]
                             else:
-                                cluster_qp_concatenation += spaced_sep_token + \
+                                cluster_qp_concatenation += sep_token + \
                             p["title"] + \
-                                spaced_sep_token + \
+                                sep_token + \
                                     p["text"]
                             start = False
                         cluster_qp_concatenation += " </s> "
@@ -411,15 +463,15 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                 # add passage one by one
                 start = True
                 # NOTE: get passage clustering
-                for p in passages.get_passages(i, args.top_k_passages):
+                for p in passages.get_passages(i, num_top_passages):
                     # format: [CLS] question [SEP] title 1 [SEP] passages
                     
                     if start:
                         questions_n_passages[i] += p["title"] + \
-                            spaced_sep_token + p["text"]
+                            sep_token + p["text"]
                     else:
-                        questions_n_passages[i] +=  spaced_sep_token + \
-                            p["title"] +  spaced_sep_token + p["text"]
+                        questions_n_passages[i] +=  sep_token + \
+                            p["title"] +  sep_token + p["text"]
                     start = False
             questions_n_passages[i] += " </s> "
 
@@ -440,7 +492,6 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
             metadata), (len(questions_n_passages), len(metadata))
         # format QP and A
         for idx, (cur_qp, cur_md) in enumerate(zip(questions_n_passages, metadata)):
-            # import pdb; pdb.set_trace()
             found_answers_for_one_question = []
             # check existance of answers for latter joining (for evaluation)
             for cur_md_for_qa_pair in cur_md:
@@ -457,7 +508,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                                 p_str = get_p_str(cur_qp_str, tokenizer,
                                                 args.max_input_length)
                                 
-                                if is_training and not args.debug:
+                                if is_training and not args.debugTrain:
                                     if is_answer_in_passages(cur_a_str, p_str):
                                         found_answer_for_qa_pair.append(
                                             cur_a_str)
@@ -469,7 +520,7 @@ def preprocess_qpa(questions, question_ids, passages, answers, metadata, data,
                             p_str = get_p_str(cur_qp, tokenizer,
                                             args.max_input_length)
 
-                            if is_training and not args.debug:
+                            if is_training and not args.debugTrain:
                                 if is_answer_in_passages(cur_a_str, p_str):
                                     found_answer_for_qa_pair.append(
                                         cur_a_str)
