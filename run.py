@@ -97,12 +97,10 @@ def run(args, logger):
         logger.info("Add <sep> token into tokenizer")
         # add extra token for BART
         tokenizer.add_tokens(["<SEP>"], special_tokens=True)
+        tokenizer.sep_token = "<SEP>"
+        # for toeknizer doesn't have bos tokens
         if tokenizer.bos_token_id == None:
             tokenizer.add_tokens(["<s>"], special_tokens=True)
-
-
-
-
 
     if args.do_tokenize:
         # during the process train_data will be overwritten, so memory will be collected
@@ -110,7 +108,7 @@ def run(args, logger):
             for l in range(600, 800, 50):
                 print("Evaluate passage coverage for top ", k,
                       "passages for max input sequence length ", l)
-                args.top_k_passages = k
+                args.num_top_passages = k
                 args.max_input_length = l
                 train_data = QAData(logger, args, args.train_file, "train")
                 if args.do_predict:
